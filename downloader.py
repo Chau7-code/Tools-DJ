@@ -1028,6 +1028,22 @@ def download_for_recognition(url, output_path):
         raise Exception("MP3 non créé")
 
 
+def format_timecode(seconds):
+    """Format seconds to H:M:S style (e.g. 1H30.14 or 07.10)"""
+    try:
+        seconds = int(float(seconds))
+    except:
+        return str(seconds)
+    
+    m, s = divmod(seconds, 60)
+    h, m = divmod(m, 60)
+    
+    if h > 0:
+        return f"{h}H{m:02d}.{s:02d}"
+    else:
+        return f"{m:02d}.{s:02d}"
+
+
 def recognize_music_from_url_sync(url, timecodes=None, progress_id=None, progress_dict=None, keep_file=False):
     """Sync wrapper for recognize_music_from_url"""
     import asyncio
@@ -1101,6 +1117,7 @@ async def recognize_music_from_url(url, timecodes=None, progress_id=None, progre
                     
                     results.append({
                         'timecode': timecode,
+                        'formatted_timecode': format_timecode(timecode),
                         'title': title,
                         'artist': artist,
                         'shazam_url': track_info.get('url', None),
@@ -1143,6 +1160,7 @@ async def recognize_music_from_url(url, timecodes=None, progress_id=None, progre
                 'title': best_result['title'],
                 'artist': best_result['artist'],
                 'timecode': best_result['timecode'],
+                'formatted_timecode': best_result['formatted_timecode'],
                 'cover_art': best_result['cover_art'],
                 'shazam_url': best_result['shazam_url'],
                 'links': all_tracks_links[0]['links']

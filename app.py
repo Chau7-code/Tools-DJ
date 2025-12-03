@@ -239,5 +239,148 @@ def progress(progress_id):
 
     return Response(stream_with_context(generate()), mimetype='text/event-stream')
 
+@app.route('/find', methods=['POST'])
+def find_music():
+    """Endpoint de reconnaissance musicale"""
+    data = request.json
+    url = data.get('url')
+    timecodes_str = data.get('timecodes')
+    do_download = data.get('download', False)
+    
+    if not url:
+        return jsonify({'error': 'URL manquante'}), 400
+        
+    # Parser les timecodes
+    timecodes = None
+    if timecodes_str:
+        try:
+            # Supporte "10;20;30" ou "10,20,30"
+            parts = timecodes_str.replace(',', ';').split(';')
+            timecodes = [downloader.parse_timecode(tc.strip()) for tc in parts if tc.strip()]
+        except Exception as e:
+            return jsonify({'error': f'Format de timecode invalide: {str(e)}'}), 400
+            
+    progress_id = str(uuid.uuid4())
+    download_progress[progress_id] = {
+        'status': 'starting',
+        'percent': 0,
+        'message': 'Démarrage de l\'analyse...'
+    }
+    
+    def process_identification():
+        try:
+            download_progress[progress_id]['status'] = 'analyzing'
+            download_progress[progress_id]['message'] = 'Téléchargement et analyse en cours...'
+            
+            # Reconnaissance
+            result = downloader.recognize_music_from_url_sync(
+                url, 
+                timecodes=timecodes,
+                progress_id=progress_id,
+                progress_dict=download_progress
+            )
+            
+            if not result['found']:
+                download_progress[progress_id] = {
+                    'status': 'completed_find', # Statut spécial pour fin de recherche sans téléchargement
+                    'found': False,
+                    'message': result.get('message', 'Aucune musique trouvée')
+                }
+                return
+
+            # Si on doit télécharger
+            if do_download:
+                download_progress[progress_id]['message'] = 'Musique trouvée ! Téléchargement en cours...'
+                download_progress[progress_id]['found_results'] = result.get('results', [])
+                
+                results_to_download = result.get('results', [])
+                # Si pas de liste results (vieux format), on utilise les champs top level
+                if not results_to_download:
+                    results_to_download = [result]
+                
+                downloaded_files = []
+                
+                for i, res in enumerate(results_to_download):
+                    track_name = f"{res['artist']} - {res['title']}"
+                    download_progress[progress_id]['message'] = f"Téléchargement de : {track_name}"
+                    
+                    # Recherche et téléchargement via YouTube
+                    search_query = f"ytsearch1:{track_name} audio"
+                    output_path = os.path.join(app.config['UPLOAD_FOLDER'], f'{progress_id}_{i}.mp3')
+                    
+                    try:
+                        final_path, final_filename = downloader.download_youtube(
+                            search_query, 
+                            output_path, 
+                            custom_filename=track_name,
+                            progress_id=None, # On ne met pas à jour la barre de progression globale pour chaque sous-téléchargement pour l'instant
+                            progress_dict=None
+                        )
+                        downloaded_files.append((final_path, final_filename))
+                    except Exception as e:
+                        print(f"Erreur téléchargement {track_name}: {e}")
+                
+                if not downloaded_files:
+                    raise Exception("Impossible de télécharger la musique trouvée.")
+                
+                # Si un seul fichier
+                if len(downloaded_files) == 1:
+                    final_path, final_filename = downloaded_files[0]
+                    # Renommer pour avoir l'ID propre
+                    clean_path = os.path.join(app.config['UPLOAD_FOLDER'], f'{progress_id}.mp3')
+                    if os.path.exists(clean_path): os.remove(clean_path)
+                    os.rename(final_path, clean_path)
+                    
+                    download_progress[progress_id] = {
+                        'status': 'completed', # Déclenche le téléchargement standard
+                        'percent': 100,
+                        'file_id': progress_id,
+                        'filename': final_filename + ".mp3",
+                        'is_zip': False,
+                        'found_info': result # Pour afficher les infos
+                    }
+                else:
+                    # Plusieures fichiers -> ZIP
+                    import zipfile
+                    zip_filename = f"musiques_trouvees_{progress_id}.zip"
+                    zip_path = os.path.join(app.config['UPLOAD_FOLDER'], f'{progress_id}.zip')
+                    
+                    with zipfile.ZipFile(zip_path, 'w') as zipf:
+                        for fpath, fname in downloaded_files:
+                            zipf.write(fpath, fname + ".mp3")
+                            try:
+                                os.remove(fpath) # Nettoyage
+                            except: pass
+                            
+                    download_progress[progress_id] = {
+                        'status': 'completed',
+                        'percent': 100,
+                        'file_id': progress_id,
+                        'filename': zip_filename,
+                        'is_zip': True,
+                        'found_info': result
+                    }
+            else:
+                # Pas de téléchargement demandé, on renvoie juste les infos
+                download_progress[progress_id] = {
+                    'status': 'completed_find',
+                    'found': True,
+                    'results': result.get('results', []),
+                    'message': 'Analyse terminée'
+                }
+                
+        except Exception as e:
+            print(f"Erreur find: {e}")
+            download_progress[progress_id] = {
+                'status': 'error',
+                'message': str(e)
+            }
+
+    thread = threading.Thread(target=process_identification)
+    thread.daemon = True
+    thread.start()
+    
+    return jsonify({'success': True, 'progress_id': progress_id})
+
 if __name__ == '__main__':
     app.run(debug=True, host='0.0.0.0', port=5000, use_reloader=False)

@@ -361,7 +361,7 @@ async def find_music(ctx, url: str = None, *args):
                 if res.get('shazam_url'): links_txt += f"🔵 [Shazam]({res['shazam_url']})"
                 
                 embed.add_field(
-                    name=f"⏱️ {res['timecode']}s",
+                    name=f"⏱️ {res.get('formatted_timecode', f'{res['timecode']}s')}",
                     value=f"**{res['title']}**\n{res['artist']}\n{links_txt}",
                     inline=False
                 )
@@ -419,7 +419,7 @@ async def find_music(ctx, url: str = None, *args):
             # Ajouter le timecode où la musique a été trouvée
             embed.add_field(
                 name="⏱️ Trouvé à",
-                value=f"{result['timecode']}s",
+                value=f"{result.get('formatted_timecode', f'{result['timecode']}s')}",
                 inline=True
             )
         

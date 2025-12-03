@@ -220,14 +220,155 @@
                 transform: rotate(360deg);
             }
         }
+
+        /* Tabs */
+        .tabs {
+            display: flex;
+            margin-bottom: 20px;
+            background: rgba(255, 255, 255, 0.5);
+            border-radius: 12px;
+            padding: 5px;
+        }
+
+        .tab-btn {
+            flex: 1;
+            padding: 12px;
+            border: none;
+            background: transparent;
+            border-radius: 8px;
+            font-family: 'Poppins', sans-serif;
+            font-weight: 600;
+            color: #4a5568;
+            cursor: pointer;
+            transition: all 0.3s;
+        }
+
+        .tab-btn.active {
+            background: white;
+            color: #667eea;
+            box-shadow: 0 2px 5px rgba(0, 0, 0, 0.05);
+        }
+
+        .section {
+            display: none;
+            animation: fadeIn 0.3s ease;
+        }
+
+        .section.active {
+            display: block;
+        }
+
+        .info-text {
+            font-size: 0.9rem;
+            color: #718096;
+            margin-bottom: 10px;
+            text-align: center;
+        }
+
+        .checkbox-group {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            padding: 10px;
+            background: rgba(255, 255, 255, 0.5);
+            border-radius: 8px;
+        }
+
+        .checkbox-group input[type="checkbox"] {
+            width: 20px;
+            height: 20px;
+            cursor: pointer;
+        }
+
+        .checkbox-group label {
+            cursor: pointer;
+            font-size: 0.95rem;
+            color: #4a5568;
+        }
+
+        /* Find Results */
+        .find-results {
+            margin-top: 20px;
+            display: flex;
+            flex-direction: column;
+            gap: 15px;
+        }
+
+        .result-card {
+            background: white;
+            border-radius: 12px;
+            padding: 15px;
+            display: flex;
+            gap: 15px;
+            align-items: center;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.05);
+            border: 1px solid #e2e8f0;
+        }
+
+        .result-cover {
+            width: 80px;
+            height: 80px;
+            border-radius: 8px;
+            object-fit: cover;
+            background: #eee;
+        }
+
+        .result-info {
+            flex: 1;
+        }
+
+        .result-title {
+            font-weight: 700;
+            color: #2d3748;
+            margin-bottom: 4px;
+        }
+
+        .result-artist {
+            color: #718096;
+            font-size: 0.9rem;
+            margin-bottom: 8px;
+        }
+
+        .result-links {
+            display: flex;
+            gap: 10px;
+        }
+
+        .link-icon {
+            text-decoration: none;
+            font-size: 1.2rem;
+            transition: transform 0.2s;
+        }
+
+        .link-icon:hover {
+            transform: scale(1.2);
+        }
+
+        .timecode-badge {
+            background: #edf2f7;
+            padding: 4px 8px;
+            border-radius: 4px;
+            font-size: 0.8rem;
+            color: #4a5568;
+            font-weight: 600;
+        }
     </style>
 </head>
 
 <body>
     <div class="container">
-        <h1>🎵 Convertisseur de Musique</h1>
+        <h1>Convertisseur & Identificateur</h1>
 
-        <div class="search-container">
+        <div class="tabs">
+            <button class="tab-btn active" onclick="switchTab('convert')">Convertisseur</button>
+            <button class="tab-btn" onclick="switchTab('find')">Identifier une musique</button>
+        </div>
+
+        <div id="convert-section" class="section active">
+            <div class="info-text">
+                Téléchargez de la musique depuis YouTube, SoundCloud, Spotify ou Instagram.
+            </div>
+
             <div class="supported-platforms">
                 <span class="platform-badge badge-youtube">YouTube</span>
                 <span class="platform-badge badge-soundcloud">SoundCloud</span>
@@ -235,25 +376,109 @@
                 <span class="platform-badge badge-instagram">Instagram</span>
             </div>
 
-            <div class="input-group">
-                <input type="text" id="urlInput" class="search-input"
-                    placeholder="Collez votre lien ici (YouTube, Spotify, SoundCloud, Instagram)...">
+            <div class="search-container">
+                <div class="input-group">
+                    <input type="text" id="urlInput" class="search-input" placeholder="Collez l'URL ici...">
+                </div>
+                <div class="input-group">
+                    <input type="text" id="fileNameInput" class="search-input" placeholder="Nom du fichier (optionnel)">
+                </div>
+                <button onclick="convertUrl()" id="convertBtn" class="btn-convert">Convertir en MP3</button>
+            </div>
+        </div>
+
+        <div id="find-section" class="section">
+            <div class="info-text">
+                Identifiez une musique à partir d'une URL (YouTube, SoundCloud, etc.)
             </div>
 
-            <div class="input-group">
-                <input type="text" id="fileNameInput" class="search-input"
-                    placeholder="Nom du fichier (optionnel - sera remplacé par le titre si vide)">
+            <div class="search-container">
+                <div class="input-group">
+                    <input type="text" id="findUrlInput" class="search-input"
+                        placeholder="URL de la vidéo/audio à analyser...">
+                </div>
+                <div class="input-group">
+                    <input type="text" id="timecodesInput" class="search-input"
+                        placeholder="Timecodes (ex: 30,60,90) - Optionnel">
+                </div>
+
+                <div class="checkbox-group">
+                    <input type="checkbox" id="downloadFound">
+                    <label for="downloadFound">Télécharger la musique si trouvée</label>
+                </div>
+
+                <button onclick="findMusic()" id="findBtn" class="btn-convert">Rechercher</button>
             </div>
 
-            <button class="btn btn-convert" id="convertBtn" onclick="convertUrl()">
-                Convertir en MP3
-            </button>
+            <div id="find-results" class="find-results"></div>
         </div>
 
         <div id="status" class="status"></div>
     </div>
 
     <script>
+        function switchTab(tabName) {
+            // Update buttons
+            document.querySelectorAll('.tab-btn').forEach(btn => btn.classList.remove('active'));
+            event.target.classList.add('active');
+
+            // Update sections
+            document.querySelectorAll('.section').forEach(section => section.classList.remove('active'));
+            document.getElementById(`${tabName}-section`).classList.add('active');
+
+            // Clear status
+            document.getElementById('status').style.display = 'none';
+        }
+
+        async function findMusic() {
+            const urlInput = document.getElementById('findUrlInput');
+            const timecodesInput = document.getElementById('timecodesInput');
+            const downloadCheckbox = document.getElementById('downloadFound');
+            const findBtn = document.getElementById('findBtn');
+            const resultsDiv = document.getElementById('find-results');
+
+            const url = urlInput.value.trim();
+            const timecodes = timecodesInput.value.trim();
+            const doDownload = downloadCheckbox.checked;
+
+            if (!url) {
+                showStatus('Veuillez entrer une URL', 'error');
+                return;
+            }
+
+            // Reset UI
+            resultsDiv.innerHTML = '';
+            findBtn.disabled = true;
+            findBtn.textContent = 'Recherche en cours...';
+            showStatus('Analyse de l\'audio et recherche en cours...', 'loading');
+
+            try {
+                const response = await fetch('/find', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        url: url,
+                        timecodes: timecodes,
+                        download: doDownload
+                    })
+                });
+
+                const data = await response.json();
+
+                if (response.ok && data.success && data.progress_id) {
+                    trackProgress(data.progress_id, 'find');
+                } else {
+                    showStatus(`❌ Erreur: ${data.error || 'Erreur inconnue'}`, 'error');
+                    findBtn.disabled = false;
+                    findBtn.textContent = 'Rechercher';
+                }
+            } catch (error) {
+                showStatus(`❌ Erreur: ${error.message}`, 'error');
+                findBtn.disabled = false;
+                findBtn.textContent = 'Rechercher';
+            }
+        }
+
         async function convertUrl() {
             const urlInput = document.getElementById('urlInput');
             const fileNameInput = document.getElementById('fileNameInput');
@@ -288,7 +513,7 @@
 
                 if (response.ok && data.success && data.progress_id) {
                     // Utiliser Server-Sent Events pour suivre la progression
-                    trackProgress(data.progress_id);
+                    trackProgress(data.progress_id, 'convert');
                 } else {
                     let errorMsg = data.error || 'Erreur inconnue';
                     if (errorMsg.includes('FFmpeg') && errorMsg.includes('téléchargement')) {
@@ -307,11 +532,8 @@
             }
         }
 
-        function trackProgress(progressId) {
+        function trackProgress(progressId, type = 'convert') {
             const eventSource = new EventSource(`/progress/${progressId}`);
-            const convertBtn = document.getElementById('convertBtn');
-            const urlInput = document.getElementById('urlInput');
-            const fileNameInput = document.getElementById('fileNameInput');
             let lastReceivedStatus = null;
             let checkInterval = null;
 
@@ -321,10 +543,10 @@
                     const response = await fetch(`/check-progress/${progressId}`);
                     if (response.ok) {
                         const data = await response.json();
-                        if (data.status === 'completed' || data.status === 'error') {
+                        if (data.status === 'completed' || data.status === 'error' || data.status === 'completed_find') {
                             handleProgressUpdate(data);
                             if (checkInterval) clearInterval(checkInterval);
-                        } else if (data.status === 'downloading' || data.status === 'converting') {
+                        } else if (data.status === 'downloading' || data.status === 'converting' || data.status === 'analyzing') {
                             // Mettre à jour la progression même via le fallback
                             handleProgressUpdate(data);
                         }
@@ -335,8 +557,25 @@
             };
 
             const handleProgressUpdate = function (data) {
+                // Gestion spécifique pour la recherche sans téléchargement
+                if (data.status === 'completed_find') {
+                    if (eventSource) eventSource.close();
+                    if (checkInterval) clearInterval(checkInterval);
+
+                    document.getElementById('findBtn').disabled = false;
+                    document.getElementById('findBtn').textContent = 'Rechercher';
+
+                    if (data.found) {
+                        showStatus('✅ Analyse terminée !', 'success');
+                        displayFindResults(data.results || [data]);
+                    } else {
+                        showStatus(`❌ ${data.message || 'Aucune musique trouvée'}`, 'error');
+                    }
+                    return;
+                }
+
                 if (data.status === 'completed') {
-                    console.log('Conversion terminée, affichage du bouton de téléchargement');
+                    console.log('Terminé, affichage du bouton de téléchargement');
                     if (eventSource) eventSource.close();
                     if (checkInterval) clearInterval(checkInterval);
 
@@ -344,13 +583,13 @@
                     // Ajout du paramètre filename à l'URL
                     const downloadUrl = `/download/${data.file_id}?filename=${encodeURIComponent(filename)}`;
 
-                    const statusMessage = `✅ ${data.message || 'Conversion réussie'} !<br><br>`;
+                    const statusMessage = `✅ ${data.message || 'Opération réussie'} !<br><br>`;
                     const downloadLinkHtml = `
                         <a href="${downloadUrl}" download="${filename}" class="download-link"
                            style="display: inline-block; margin-top: 10px; padding: 12px 24px;
                                   background: #667eea; color: white; text-decoration: none;
                                   border-radius: 8px; font-weight: 600; transition: all 0.3s; cursor: pointer;">
-                            📥 Télécharger le MP3
+                            📥 Télécharger ${data.is_zip ? 'le ZIP' : 'le MP3'}
                         </a>`;
 
                     const statusDiv = document.getElementById('status');
@@ -358,33 +597,45 @@
                     statusDiv.className = 'status success';
                     statusDiv.style.display = 'block';
 
-                    urlInput.value = '';
-                    fileNameInput.value = '';
-                    convertBtn.disabled = false;
-                    convertBtn.textContent = 'Convertir en MP3';
+                    // Reset buttons
+                    if (type === 'convert') {
+                        document.getElementById('urlInput').value = '';
+                        document.getElementById('fileNameInput').value = '';
+                        document.getElementById('convertBtn').disabled = false;
+                        document.getElementById('convertBtn').textContent = 'Convertir en MP3';
+                    } else {
+                        document.getElementById('findBtn').disabled = false;
+                        document.getElementById('findBtn').textContent = 'Rechercher';
+                        // Afficher aussi les résultats si disponibles
+                        if (data.found_info) {
+                            displayFindResults(data.found_info.results || [data.found_info]);
+                        }
+                    }
                 } else if (data.status === 'error') {
                     console.log('Erreur détectée:', data.error);
                     if (eventSource) eventSource.close();
                     if (checkInterval) clearInterval(checkInterval);
 
-                    let errorMsg = data.error || 'Erreur inconnue';
+                    let errorMsg = data.message || data.error || 'Erreur inconnue';
                     if (errorMsg.includes('FFmpeg') && errorMsg.includes('téléchargement')) {
                         errorMsg = '⏳ FFmpeg est en cours de téléchargement automatique. Cela peut prendre quelques minutes. Veuillez réessayer dans quelques instants.';
                         showStatus(errorMsg, 'loading');
                     } else {
                         showStatus(`❌ Erreur: ${errorMsg}`, 'error');
                     }
-                    convertBtn.disabled = false;
-                    convertBtn.textContent = 'Convertir en MP3';
-                } else if (data.status === 'downloading' || data.status === 'converting') {
+
+                    document.getElementById('convertBtn').disabled = false;
+                    document.getElementById('convertBtn').textContent = 'Convertir en MP3';
+                    document.getElementById('findBtn').disabled = false;
+                    document.getElementById('findBtn').textContent = 'Rechercher';
+
+                } else if (['downloading', 'converting', 'analyzing', 'starting'].includes(data.status)) {
                     // Mettre à jour la progression
                     const percent = Math.round(data.percent || 0);
-                    let statusText = 'Conversion en cours...';
+                    let statusText = data.message || 'Traitement en cours...';
 
-                    if (data.status === 'downloading') {
-                        statusText = `Téléchargement en cours... ${percent}%`;
-                    } else if (data.status === 'converting') {
-                        statusText = 'Conversion en cours...';
+                    if (data.status === 'downloading' && percent > 0) {
+                        statusText = `${data.message || 'Téléchargement'} (${percent}%)`;
                     }
 
                     showStatus(statusText, 'loading');
@@ -397,7 +648,7 @@
             eventSource.onmessage = function (event) {
                 try {
                     const data = JSON.parse(event.data);
-                    console.log('Données SSE reçues:', data);
+                    // console.log('Données SSE reçues:', data);
                     handleProgressUpdate(data);
                 } catch (error) {
                     console.error('Erreur lors du parsing des données SSE:', error, event.data);
@@ -407,25 +658,56 @@
             eventSource.onerror = function (error) {
                 console.error('Erreur SSE:', error);
                 // Ne pas fermer immédiatement, le fallback vérifiera
-                // Si le flux est vraiment fermé, le fallback prendra le relais
                 if (eventSource.readyState === EventSource.CLOSED) {
-                    // Le flux est fermé, démarrer le fallback
                     if (!checkInterval) {
                         checkInterval = setInterval(checkCompletion, 2000);
                     }
                 }
             };
 
-            // Démarrer un fallback après 10 secondes si on n'a pas reçu de statut "completed" ou "error"
-            // Cela permet de vérifier périodiquement même si le flux SSE a des problèmes
+            // Démarrer un fallback après 10 secondes
             setTimeout(function () {
-                if (lastReceivedStatus !== 'completed' && lastReceivedStatus !== 'error') {
+                if (lastReceivedStatus !== 'completed' && lastReceivedStatus !== 'error' && lastReceivedStatus !== 'completed_find') {
                     if (!checkInterval) {
                         console.log('Démarrage du fallback de vérification');
                         checkInterval = setInterval(checkCompletion, 2000);
                     }
                 }
             }, 10000);
+        }
+
+        function displayFindResults(results) {
+            const container = document.getElementById('find-results');
+            container.innerHTML = '';
+
+            if (!results || results.length === 0) return;
+
+            results.forEach(res => {
+                const card = document.createElement('div');
+                card.className = 'result-card';
+
+                const coverUrl = res.cover_art || 'https://via.placeholder.com/80?text=No+Cover';
+
+                let linksHtml = '';
+                if (res.links) {
+                    if (res.links.youtube) linksHtml += `<a href="${res.links.youtube}" target="_blank" class="link-icon" title="YouTube">🎥</a>`;
+                    if (res.links.spotify) linksHtml += `<a href="${res.links.spotify}" target="_blank" class="link-icon" title="Spotify">🎧</a>`;
+                    if (res.links.soundcloud) linksHtml += `<a href="${res.links.soundcloud}" target="_blank" class="link-icon" title="SoundCloud">☁️</a>`;
+                }
+                if (res.shazam_url) linksHtml += `<a href="${res.shazam_url}" target="_blank" class="link-icon" title="Shazam">🔵</a>`;
+
+                card.innerHTML = `
+                    <img src="${coverUrl}" class="result-cover" alt="Cover">
+                    <div class="result-info">
+                        <div class="result-title">${res.title}</div>
+                        <div class="result-artist">${res.artist}</div>
+                        <div class="result-links">${linksHtml}</div>
+                    </div>
+                    <div class="timecode-badge">${res.formatted_timecode || res.timecode + 's'}</div>
+                `;
+
+                container.appendChild(card);
+            });
         }
 
         function showStatus(message, type) {
@@ -437,9 +719,10 @@
 
         // Permettre la conversion avec la touche Entrée
         document.getElementById('urlInput').addEventListener('keypress', function (e) {
-            if (e.key === 'Enter') {
-                convertUrl();
-            }
+            if (e.key === 'Enter') convertUrl();
+        });
+        document.getElementById('findUrlInput').addEventListener('keypress', function (e) {
+            if (e.key === 'Enter') findMusic();
         });
     </script>
 </body>
