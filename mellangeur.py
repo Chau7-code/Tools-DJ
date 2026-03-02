@@ -100,8 +100,8 @@ def main():
     print("--- Mélangeur de Playlist Spotify (Multi-Sources) ---")
     
     # Check for credentials
-    client_id = os.getenv("SPOTIPY_CLIENT_ID", "3c4217ec0e04475790086e67b7161527")
-    client_secret = os.getenv("SPOTIPY_CLIENT_SECRET", "70f352025190408a9218c901388b4f65")
+    client_id = os.getenv("SPOTIPY_CLIENT_ID", "")
+    client_secret = os.getenv("SPOTIPY_CLIENT_SECRET", "")
     
     if not client_id or not client_secret:
         print("\nATTENTION: Identifiants Spotify manquants.")
