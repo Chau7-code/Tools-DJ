@@ -5,6 +5,49 @@ from dotenv import load_dotenv
 import downloader
 import asyncio
 import shutil
+import uuid
+import random
+import string
+import requests
+import json
+import sys
+import subprocess
+
+def upload_to_transfer_api(file_path, title="Fichiers partagés"):
+    """
+    Uploads a file to GoFile API if it exceeds the Discord size limit.
+    Returns the download URL if successful, or None if failed.
+    """
+    try:
+        # Step 1: Get the best server available
+        server_req = requests.get("https://api.gofile.io/servers")
+        server_req.raise_for_status()
+        server_data = server_req.json()
+        
+        if server_data.get('status') != 'ok':
+            print(f"[ERROR] GoFile server request failed: {server_data}")
+            return None
+            
+        server = server_data['data']['servers'][0]['name']
+        upload_url = f"https://{server}.gofile.io/contents/uploadfile"
+        
+        # Step 2: Upload the file
+        print(f"[GoFile] Uploading to {server}...")
+        with open(file_path, 'rb') as f:
+            files = {'file': (os.path.basename(file_path), f)}
+            response = requests.post(upload_url, files=files)
+            response.raise_for_status()
+            
+            result = response.json()
+            if result.get('status') == 'ok':
+                return result['data']['downloadPage']
+            else:
+                print(f"[ERROR] GoFile upload failed: {result}")
+                return None
+            
+    except Exception as e:
+        print(f"[ERROR] Upload to GoFile API failed: {e}")
+        return None
 
 # Charger les variables d'environnement
 load_dotenv()
@@ -12,8 +55,14 @@ TOKEN = os.getenv('DISCORD_TOKEN')
 
 # Configuration
 UPLOAD_FOLDER = 'downloads_bot'
+INSTALL_FOLDER = os.path.join(UPLOAD_FOLDER, 'musique_find')
 FFMPEG_FOLDER = 'ffmpeg_local'
 downloader.setup(UPLOAD_FOLDER, FFMPEG_FOLDER)
+os.makedirs(INSTALL_FOLDER, exist_ok=True)
+
+# Stockage en mémoire des résultats de recherche
+FIND_HISTORY = {}
+
 
 # Configuration du bot
 intents = discord.Intents.default()
@@ -188,11 +237,30 @@ async def convert(ctx, url: str, *args):
                 os.remove(file_path)
             return
         
-        limit_bytes = 25 * 1024 * 1024 # 25 MB
+        # Vérifier la taille du fichier (Discord limite à 25MB gratuit, on met une limite safe à 24MB)
+        limit_bytes = 24 * 1024 * 1024 # 24 MB
         
         if file_size > limit_bytes:
-            await status_msg.edit(content=f"Le fichier est trop volumineux ({file_size / (1024*1024):.2f} MB) pour être envoyé sur Discord.")
-            # Ne pas supprimer le fichier ici, laisser l'utilisateur décider
+            await status_msg.edit(content=f"Le fichier est très volumineux ({file_size / (1024*1024):.2f} MB). Upload vers GoFile en cours... ⏳")
+            
+            # Utiliser la fonction d'upload API
+            try:
+                download_url = await loop.run_in_executor(None, lambda: upload_to_transfer_api(file_path, title=f"Conversion: {filename}"))
+                
+                if download_url:
+                    await target_channel.send(
+                        f"🎶 **Conversion demandée par {ctx.author.mention}**\n\n"
+                        f"⚠️ Le fichier dépasse la limite Discord ({file_size / (1024*1024):.2f} MB).\n"
+                        f"📁 Voici le lien sécurisé pour le télécharger (via GoFile) :\n"
+                        f"🔗 {download_url}"
+                    )
+                    await status_msg.edit(content="✅ Fichier envoyé via lien de transfert !")
+                else:
+                    await status_msg.edit(content=f"❌ Le fichier est trop volumineux ({file_size / (1024*1024):.2f} MB) et l'envoi vers le service de transfert a échoué.")
+            except Exception as e:
+                print(f"[ERROR] Exception during transfer upload: {e}")
+                await status_msg.edit(content=f"❌ Erreur lors de l'envoi vers le service de transfert: {e}")
+
         else:
             await status_msg.edit(content="Envoi du fichier dans le salon musique...")
             print(f"[DEBUG] Envoi vers le salon: {target_channel.name}")
@@ -262,7 +330,9 @@ async def find_music(ctx, url: str = None, *args):
             value=(
                 "`!find <url>` - Analyse aux positions par défaut (30s, 60s, 90s)\n"
                 "`!find <url> -t <timecodes>` - Analyse aux timecodes spécifiés\n"
-                "`!find <url> -no_delete` - Garde le fichier téléchargé après analyse"
+                "`!find <url> -t <timecodes>` - Analyse aux timecodes spécifiés\n"
+                "`!find <url> -no_delete` - Garde le fichier téléchargé après analyse\n"
+                "`!install -u <uid> <numero>` - Installe une musique trouvée"
             ),
             inline=False
         )
@@ -340,19 +410,26 @@ async def find_music(ctx, url: str = None, *args):
             lambda: downloader.recognize_music_from_url_sync(url, timecodes, keep_file=keep_file)
         )
         
+        # Générer un UID pour cette recherche
+        search_uid = ''.join(random.choices(string.ascii_uppercase + string.digits, k=4))
+        
         if not result['found']:
             await status_msg.edit(content=f"❌ {result['message']}")
             return
         
+        # Stocker les résultats
+        results_list = result.get('results', [result])
+        FIND_HISTORY[search_uid] = results_list
+        
         # Vérifier si on a plusieurs résultats
         if 'results' in result and len(result['results']) > 1:
             embed = discord.Embed(
-                title=f"🎵 {len(result['results'])} Musiques Identifiées !",
-                description=f"Voici les musiques trouvées aux différents timecodes :",
+                title=f"🎵 {len(result['results'])} Musiques Identifiées ! (UID: {search_uid})",
+                description=f"Utilisez `!install -u {search_uid} <numero>` pour télécharger.",
                 color=discord.Color.green()
             )
             
-            for res in result['results']:
+            for i, res in enumerate(result['results']):
                 links_txt = ""
                 if 'links' in res:
                     if 'youtube' in res['links']: links_txt += f"🎥 [YouTube]({res['links']['youtube']}) "
@@ -361,15 +438,15 @@ async def find_music(ctx, url: str = None, *args):
                 if res.get('shazam_url'): links_txt += f"🔵 [Shazam]({res['shazam_url']})"
                 
                 embed.add_field(
-                    name=f"⏱️ {res.get('formatted_timecode', f'{res['timecode']}s')}",
+                    name=f"#{i+1} - ⏱️ {res.get('formatted_timecode', f'{res['timecode']}s')}",
                     value=f"**{res['title']}**\n{res['artist']}\n{links_txt}",
                     inline=False
                 )
         else:
             # Cas normal (un seul résultat)
             embed = discord.Embed(
-                title="🎵 Musique Identifiée !",
-                description=f"**{result['title']}**\npar {result['artist']}",
+                title=f"🎵 Musique Identifiée ! (UID: {search_uid})",
+                description=f"**{result['title']}**\npar {result['artist']}\n\nUtilisez `!install -u {search_uid} 1` pour télécharger.",
                 color=discord.Color.green()
             )
             
@@ -428,6 +505,375 @@ async def find_music(ctx, url: str = None, *args):
         
     except Exception as e:
         await status_msg.edit(content=f"❌ Erreur lors de la reconnaissance : {str(e)}")
+
+# ===== COMMANDES MUSIQUE VOCAL =====
+
+@bot.command(name='play')
+async def play(ctx, *args):
+    """Joue de la musique depuis une URL dans le salon vocal"""
+    
+    # Gestion de l'aide
+    if args and args[0] in ['-h', '-help', '--help']:
+        embed = discord.Embed(
+            title="🎵 Aide Commande Play",
+            description="Joue de la musique depuis une URL directement dans votre salon vocal.",
+            color=discord.Color.green()
+        )
+        embed.add_field(
+            name="🌍 Plateformes Supportées",
+            value="• **YouTube**\n• **SoundCloud**\n• **Spotify**\n• **Instagram**",
+            inline=False
+        )
+        embed.add_field(
+            name="📝 Utilisation",
+            value=(
+                "`!play <url>` - Joue la musique de l'URL\n"
+                "`!play -u <uid>` - Joue toute la liste des résultats trouvés\n"
+                "`!play -u <uid> <numero>` - Joue une musique spécifique de la liste\n"
+                "`!stop` - Arrête la musique\n"
+                "`!exit` - Déconnecte le bot"
+            ),
+            inline=False
+        )
+        embed.set_footer(text="Ambiancez votre salon vocal ! 🎤")
+        await ctx.send(embed=embed)
+        return
+
+    # Vérifier si l'utilisateur est dans un salon vocal
+    if not ctx.author.voice:
+        await ctx.send("❌ Vous devez être connecté à un salon vocal pour utiliser cette commande.")
+        return
+
+    channel = ctx.author.voice.channel
+    
+    # Se connecter au salon vocal si nécessaire
+    if ctx.voice_client is None:
+        await channel.connect()
+    elif ctx.voice_client.channel != channel:
+        await ctx.voice_client.move_to(channel)
+        
+    voice_client = ctx.voice_client
+    
+    # Si déjà en train de jouer, arrêter
+    if voice_client.is_playing():
+        voice_client.stop()
+
+    # Analyse des arguments
+    url = None
+    tracks_to_play = []
+    
+    if '-u' in args:
+        try:
+            u_index = args.index('-u')
+            if u_index + 1 < len(args):
+                uid = args[u_index + 1]
+                
+                if uid not in FIND_HISTORY:
+                    await ctx.send(f"❌ UID '{uid}' introuvable ou expiré.")
+                    return
+                
+                results = FIND_HISTORY[uid]
+                
+                # Vérifier si un index spécifique est demandé
+                track_index = None
+                if u_index + 2 < len(args) and args[u_index + 2].isdigit():
+                    track_index = int(args[u_index + 2])
+                
+                if track_index is not None:
+                    # Jouer une seule piste
+                    if 1 <= track_index <= len(results):
+                        tracks_to_play = [results[track_index - 1]]
+                    else:
+                        await ctx.send(f"❌ Numéro de piste invalide. Choisissez entre 1 et {len(results)}.")
+                        return
+                else:
+                    # Jouer toute la liste (playlist)
+                    tracks_to_play = results
+                    
+        except Exception as e:
+            await ctx.send(f"❌ Erreur d'analyse des arguments: {e}")
+            return
+    elif args:
+        # Cas classique : URL directe
+        url = args[0]
+        # On crée un objet "track" fictif pour uniformiser le traitement
+        tracks_to_play = [{'url': url, 'title': 'Musique', 'artist': 'Inconnu'}]
+    else:
+        await ctx.send("❌ Veuillez spécifier une URL ou un UID.")
+        return
+
+    if not tracks_to_play:
+        await ctx.send("❌ Aucune musique à jouer.")
+        return
+
+    # Fonction récursive pour jouer la liste
+    async def play_next_track(track_list, index):
+        if index >= len(track_list):
+            await ctx.send("✅ Playlist terminée.")
+            return
+            
+        track = track_list[index]
+        
+        # Déterminer l'URL
+        play_url = track.get('url') # Cas URL directe
+        
+        # Cas résultat !find
+        if not play_url:
+            if 'links' in track and track['links']:
+                if 'youtube' in track['links']: play_url = track['links']['youtube']
+                elif 'soundcloud' in track['links']: play_url = track['links']['soundcloud']
+                elif 'spotify' in track['links']: play_url = track['links']['spotify']
+            
+            if not play_url:
+                # Fallback recherche
+                search_query = f"{track.get('artist', '')} - {track.get('title', '')}"
+                play_url = f"ytsearch1:{search_query}"
+
+        status_msg = await ctx.send(f"⬇️ Préparation de : **{track.get('title', 'Musique')}** ({index+1}/{len(track_list)})...")
+        
+        try:
+            loop = asyncio.get_event_loop()
+            
+            # ID unique pour ce téléchargement
+            play_id = str(uuid.uuid4())
+            output_path = os.path.join(UPLOAD_FOLDER, f"play_{play_id}.mp3")
+            
+            # Téléchargement
+            final_path = None
+            final_filename = track.get('title', 'Musique')
+            
+            # Détection source (simple)
+            source_type = 'auto'
+            if downloader.is_youtube_url(play_url): source_type = 'youtube'
+            elif downloader.is_soundcloud_url(play_url): source_type = 'soundcloud'
+            elif downloader.is_spotify_url(play_url): source_type = 'spotify'
+            elif downloader.is_instagram_url(play_url): source_type = 'instagram'
+            
+            # Exécution téléchargement
+            if source_type == 'youtube':
+                final_path, final_filename = await loop.run_in_executor(None, lambda: downloader.download_youtube(play_url, output_path))
+            elif source_type == 'soundcloud':
+                final_path, final_filename = await loop.run_in_executor(None, lambda: downloader.download_soundcloud(play_url, output_path))
+            elif source_type == 'spotify':
+                final_path, final_filename = await loop.run_in_executor(None, lambda: downloader.download_spotify(play_url, output_path))
+            elif source_type == 'instagram':
+                final_path, final_filename = await loop.run_in_executor(None, lambda: downloader.download_instagram(play_url, output_path))
+            else:
+                # Fallback YouTube search
+                final_path, final_filename = await loop.run_in_executor(None, lambda: downloader.download_youtube(play_url, output_path))
+
+            if not final_path or not os.path.exists(final_path):
+                await status_msg.edit(content="❌ Erreur: Fichier audio non trouvé.")
+                # Passer au suivant
+                await play_next_track(track_list, index + 1)
+                return
+                
+            # Jouer le fichier
+            ffmpeg_path = downloader.get_ffmpeg_exe_path()
+            
+            def after_playing(error):
+                if error:
+                    print(f"Erreur de lecture: {error}")
+                
+                # Nettoyage
+                try:
+                    if os.path.exists(final_path):
+                        os.remove(final_path)
+                except:
+                    pass
+                
+                # Jouer le suivant
+                if index + 1 < len(track_list):
+                    future = asyncio.run_coroutine_threadsafe(play_next_track(track_list, index + 1), loop)
+                    try:
+                        future.result()
+                    except:
+                        pass
+                    
+            source = discord.FFmpegPCMAudio(final_path, executable=ffmpeg_path)
+            voice_client.play(source, after=after_playing)
+            
+            await status_msg.edit(content=f"▶️ En train de jouer : **{final_filename}**")
+            
+        except Exception as e:
+            await status_msg.edit(content=f"❌ Erreur : {str(e)}")
+            # Essayer le suivant
+            await play_next_track(track_list, index + 1)
+
+    # Lancer la lecture de la première piste
+    await play_next_track(tracks_to_play, 0)
+
+@bot.command(name='stop')
+async def stop(ctx):
+    """Arrête la musique en cours"""
+    if ctx.voice_client and ctx.voice_client.is_playing():
+        ctx.voice_client.stop()
+        await ctx.send("⏹️ Musique arrêtée.")
+    else:
+        await ctx.send("Aucune musique n'est en cours de lecture.")
+
+@bot.command(name='exit')
+async def exit_voice(ctx):
+    """Déconnecte le bot du salon vocal"""
+    if ctx.voice_client:
+        await ctx.voice_client.disconnect()
+        await ctx.send("👋 Déconnexion du salon vocal.")
+    else:
+        await ctx.send("Le bot n'est pas connecté à un salon vocal.")
+
+@bot.command(name='install')
+async def install(ctx, *args):
+    """Installe une musique trouvée avec !find"""
+    
+    # Vérifier si l'utilisateur demande de l'aide
+    if args and args[0] in ['-h', '-help', '--help']:
+        embed = discord.Embed(
+            title="⬇️ Aide Commande Install",
+            description="Télécharge et installe une musique trouvée précédemment avec la commande `!find`.",
+            color=discord.Color.orange()
+        )
+        
+        embed.add_field(
+            name="📝 Utilisation",
+            value=(
+                "`!install -u <uid> <numero>`\n"
+                "Exemple: `!install -u ABCD 1`"
+            ),
+            inline=False
+        )
+        
+        embed.add_field(
+            name="🔍 Comment obtenir l'UID ?",
+            value="L'UID est affiché dans le titre des résultats de la commande `!find` (ex: `UID: ABCD`).",
+            inline=False
+        )
+        
+        embed.set_footer(text="Constituez votre bibliothèque musicale ! 💾")
+        await ctx.send(embed=embed)
+        return
+    
+    # Parser les arguments
+    uid = None
+    track_index = 1
+    
+    if '-u' in args:
+        try:
+            u_index = args.index('-u')
+            if u_index + 1 < len(args):
+                uid = args[u_index + 1]
+                
+                # Chercher l'index de la piste (le prochain argument qui est un nombre)
+                if u_index + 2 < len(args) and args[u_index + 2].isdigit():
+                    track_index = int(args[u_index + 2])
+        except:
+            pass
+            
+    if not uid:
+        await ctx.send("❌ Vous devez spécifier un UID avec `-u <uid>`. Utilisez `!find` d'abord.")
+        return
+        
+    if uid not in FIND_HISTORY:
+        await ctx.send(f"❌ UID '{uid}' introuvable ou expiré.")
+        return
+        
+    results = FIND_HISTORY[uid]
+    
+    if track_index < 1 or track_index > len(results):
+        await ctx.send(f"❌ Numéro de piste invalide. Choisissez entre 1 et {len(results)}.")
+        return
+        
+    track = results[track_index - 1]
+    
+    # Trouver la meilleure URL de téléchargement
+    download_url = None
+    source_type = 'auto'
+    
+    if 'links' in track and track['links']:
+        if 'youtube' in track['links']:
+            download_url = track['links']['youtube']
+            source_type = 'youtube'
+        elif 'soundcloud' in track['links']:
+            download_url = track['links']['soundcloud']
+            source_type = 'soundcloud'
+        elif 'spotify' in track['links']:
+            download_url = track['links']['spotify']
+            source_type = 'spotify'
+            
+    if not download_url:
+        # Fallback: Recherche YouTube avec titre et artiste
+        search_query = f"{track['artist']} - {track['title']}"
+        download_url = f"ytsearch1:{search_query}"
+        source_type = 'youtube'
+        
+    status_msg = await ctx.send(f"⬇️ Installation de **{track['title']}** ...")
+    
+    try:
+        loop = asyncio.get_event_loop()
+        
+        # Vérifier l'espace disque (10 GB limit)
+        limit_bytes = 10 * 1024 * 1024 * 1024 # 10 GB
+        downloader.check_and_clean_folder(INSTALL_FOLDER, limit_bytes)
+        
+        # Nom du fichier
+        safe_title = downloader.sanitize_filename(f"{track['artist']} - {track['title']}")
+        output_filename = f"{safe_title}.mp3"
+        output_path = os.path.join(INSTALL_FOLDER, output_filename)
+        
+        # Vérifier si déjà téléchargé
+        if os.path.exists(output_path):
+             await status_msg.edit(content=f"✅ Fichier déjà installé : **{output_filename}**")
+             await ctx.send(file=discord.File(output_path))
+             return
+
+        # Téléchargement
+        final_path = None
+        
+        if source_type == 'youtube':
+            final_path, _ = await loop.run_in_executor(None, lambda: downloader.download_youtube(download_url, output_path))
+        elif source_type == 'soundcloud':
+            final_path, _ = await loop.run_in_executor(None, lambda: downloader.download_soundcloud(download_url, output_path))
+        elif source_type == 'spotify':
+            final_path, _ = await loop.run_in_executor(None, lambda: downloader.download_spotify(download_url, output_path))
+            
+        if final_path and os.path.exists(final_path):
+            await status_msg.edit(content=f"✅ Installation terminée : **{output_filename}**")
+            
+            # Envoyer le fichier
+            try:
+                await ctx.send(file=discord.File(final_path))
+            except Exception as e:
+                await ctx.send(f"⚠️ Fichier installé mais trop gros pour Discord ({os.path.getsize(final_path)/(1024*1024):.2f} MB).")
+        else:
+            await status_msg.edit(content="❌ Erreur lors du téléchargement.")
+            
+    except Exception as e:
+        await status_msg.edit(content=f"❌ Erreur : {str(e)}")
+
+
+@bot.command(name='reboot')
+async def reboot(ctx):
+    """Redémarre le bot et l'interface web"""
+    
+    await ctx.send("🔄 Redémarrage en cours... (Le bot sera indisponible quelques instants)")
+    
+    try:
+        # 1. Tuer le processus app.py existant (Flask)
+        # On utilise wmic pour trouver et tuer le processus par ligne de commande
+        # car on veut éviter d'installer psutil juste pour ça
+        subprocess.run('wmic process where "CommandLine like \'%app.py%\'" call terminate', shell=True)
+        
+        # 2. Relancer app.py dans une nouvelle fenêtre
+        subprocess.Popen(f'start {sys.executable} app.py', shell=True)
+        
+        # 3. Relancer bot.py (ce script) dans une nouvelle fenêtre
+        subprocess.Popen(f'start {sys.executable} bot.py', shell=True)
+        
+        # 4. Quitter le processus actuel
+        await bot.close()
+        sys.exit(0)
+        
+    except Exception as e:
+        await ctx.send(f"❌ Erreur lors du redémarrage: {str(e)}")
 
 if __name__ == '__main__':
     if not TOKEN:

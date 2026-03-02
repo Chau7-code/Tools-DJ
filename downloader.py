@@ -2,7 +2,7 @@ import os
 import sys
 import re
 import yt_dlp
-from urllib.parse import urlparse
+from urllib.parse import urlparse, parse_qs
 import uuid
 import shutil
 import subprocess
@@ -159,6 +159,18 @@ def ensure_ffmpeg():
     
     raise Exception("FFmpeg n'est pas installé. Sur Linux/Mac, installez-le avec: sudo apt-get install ffmpeg ou brew install ffmpeg")
 
+def get_ffmpeg_exe_path():
+    """Retourne le chemin complet vers l'exécutable FFmpeg"""
+    try:
+        ffmpeg_dir = ensure_ffmpeg()
+        if os.name == 'nt':
+            return os.path.join(ffmpeg_dir, 'ffmpeg.exe')
+        else:
+            return os.path.join(ffmpeg_dir, 'ffmpeg')
+    except:
+        return 'ffmpeg' # Fallback to system path
+
+
 def is_youtube_url(url):
     parsed = urlparse(url)
     return 'youtube.com' in parsed.netloc or 'youtu.be' in parsed.netloc
@@ -186,9 +198,13 @@ def is_playlist(url):
     return False
 
 def sanitize_filename(filename):
-    filename = re.sub(r'[\\/*?:"<>|]', '_', filename)
-    filename = "".join(x for x in filename if x.isprintable())
-    return filename.strip()
+    import unicodedata
+    # Secure filename: remove accents, allow only alphanumeric, space, dot, dash, underscore
+    filename = unicodedata.normalize('NFKD', filename).encode('ascii', 'ignore').decode('ascii')
+    filename = re.sub(r'[^\w\s.-]', '_', filename)
+    filename = re.sub(r'[_]+', '_', filename)  # Collapse multiple underscores
+    # Prevent extremely long filenames and strip trailing dots/spaces
+    return filename.strip(' .')[:200]
 
 def cleanup_temp_files(directory, base_path):
     try:
@@ -220,6 +236,71 @@ def cleanup_all_temp_files(directory):
     except Exception as e:
         print(f"Erreur lors du nettoyage général: {e}")
 
+def clean_old_files(directory, max_age_seconds):
+    """Supprime les fichiers plus vieux que max_age_seconds"""
+    try:
+        if not os.path.exists(directory):
+            return
+        now = time.time()
+        count = 0
+        for f in os.listdir(directory):
+            fp = os.path.join(directory, f)
+            if os.path.isfile(fp):
+                # Vérifier si le fichier est plus vieux que max_age_seconds
+                if os.stat(fp).st_mtime < now - max_age_seconds:
+                    try:
+                        os.remove(fp)
+                        count += 1
+                    except Exception:
+                        pass
+        if count > 0:
+            print(f"[Cleanup] Suppression de {count} anciens fichiers dans {directory}")
+    except Exception as e:
+        print(f"[Cleanup] Erreur lors du nettoyage de {directory}: {e}")
+
+def check_and_clean_folder(directory, limit_bytes):
+    """Vérifie la taille du dossier et supprime les fichiers les plus anciens si nécessaire"""
+    try:
+        if not os.path.exists(directory):
+            return
+
+        total_size = 0
+        files = []
+
+        for dirpath, dirnames, filenames in os.walk(directory):
+            for f in filenames:
+                fp = os.path.join(dirpath, f)
+                try:
+                    size = os.path.getsize(fp)
+                    total_size += size
+                    files.append((fp, os.path.getmtime(fp), size))
+                except OSError:
+                    pass
+        
+        print(f"[Storage] Taille actuelle: {total_size / (1024*1024*1024):.2f} GB / {limit_bytes / (1024*1024*1024):.2f} GB")
+
+        if total_size > limit_bytes:
+            # Trier par date de modification (plus ancien en premier)
+            files.sort(key=lambda x: x[1])
+            
+            deleted_size = 0
+            for fp, mtime, size in files:
+                try:
+                    os.remove(fp)
+                    deleted_size += size
+                    total_size -= size
+                    print(f"[Storage] Suppression de {fp} ({size/1024:.2f} KB)")
+                    if total_size <= limit_bytes:
+                        break
+                except Exception as e:
+                    print(f"[Storage] Erreur suppression {fp}: {e}")
+            
+            print(f"[Storage] Nettoyage terminé. Espace libéré: {deleted_size / (1024*1024):.2f} MB")
+            
+    except Exception as e:
+        print(f"[Storage] Erreur lors de la vérification du dossier: {e}")
+
+
 def get_playlist_title(url, source_type):
     try:
         if source_type == 'spotify':
@@ -250,112 +331,192 @@ def process_playlist(url, source_type, progress_id=None, progress_dict=None):
     temp_uuid = str(uuid.uuid4())
     base_temp_dir = os.path.join(UPLOAD_FOLDER, temp_uuid)
     playlist_dir = os.path.join(base_temp_dir, playlist_name)
-    os.makedirs(playlist_dir, exist_ok=True)
-    
-    try:
-        downloaded_files = []
+    downloaded_files = []
 
-        if source_type == 'spotify':
+    if not os.path.exists(playlist_dir):
+        os.makedirs(playlist_dir)
+
+    if source_type == 'spotify':
             try:
-                import spotdl
+                import spotipy
+                from spotipy.oauth2 import SpotifyClientCredentials
             except ImportError:
-                raise Exception("spotdl n'est pas installé.")
+                raise Exception("spotipy n'est pas installé.")
             
-            if progress_id and progress_dict is not None:
-                progress_dict[progress_id] = {
-                    'percent': 0,
-                    'status': 'downloading',
-                    'message': f'Démarrage du téléchargement de la playlist "{playlist_name}"...'
-                }
+            from dotenv import load_dotenv
+            load_dotenv()
+            client_id = os.getenv("SPOTIPY_CLIENT_ID") or os.getenv("SPOTIFY_CLIENT_ID")
+            client_secret = os.getenv("SPOTIPY_CLIENT_SECRET") or os.getenv("SPOTIFY_CLIENT_SECRET")
 
-            ffmpeg_location = ensure_ffmpeg()
-            if os.name == 'nt':
-                ffmpeg_exe = os.path.join(ffmpeg_location, 'ffmpeg.exe')
-            else:
-                ffmpeg_exe = os.path.join(ffmpeg_location, 'ffmpeg')
+            if not client_id or not client_secret:
+                raise Exception("Les identifiants Spotify (SPOTIPY_CLIENT_ID, SPOTIPY_CLIENT_SECRET) ne sont pas définis dans les variables d'environnement.")
 
-            cmd = [
-                sys.executable, '-m', 'spotdl',
-                url,
-                '--output', playlist_dir,
-                '--format', 'mp3',
-                '--bitrate', '320k',
-                '--simple-tui',
-            ]
+            sp = spotipy.Spotify(auth_manager=SpotifyClientCredentials(client_id=client_id,
+                                                                       client_secret=client_secret))
             
-            if os.path.exists(ffmpeg_exe):
-                cmd.extend(['--ffmpeg', ffmpeg_exe])
-
-            print(f"[Spotify Playlist] Exécution: {' '.join(cmd)}")
+            playlist_id = url.split('/')[-1].split('?')[0]
             
-            process = subprocess.Popen(
-                cmd,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                text=True,
-                encoding='utf-8',
-                errors='replace'
-            )
-            
-            stdout, stderr = process.communicate()
-            
-            if process.returncode != 0:
-                raise Exception(f"Erreur spotdl: {stderr}")
-
-            for f in os.listdir(playlist_dir):
-                if f.endswith('.mp3'):
-                    downloaded_files.append(os.path.join(playlist_dir, f))
-            
-            if not downloaded_files:
-                raise Exception("Aucun fichier MP3 trouvé.")
-
-        else:
-            download_func = None
-            if source_type == 'youtube':
-                download_func = download_youtube
-            elif source_type == 'soundcloud':
-                download_func = download_soundcloud
-            
-            if not download_func:
-                raise Exception("Type de source non supporté pour les playlists (hors Spotify)")
-
-            ydl_opts = {'extract_flat': True, 'quiet': True}
-            
-            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                info = ydl.extract_info(url, download=False)
-                if 'entries' not in info:
-                    raise Exception("Impossible de récupérer les éléments de la playlist")
+            if '/album/' in url:
+                results = sp.album_tracks(playlist_id)
+                tracks = results['items']
+                while results['next']:
+                    results = sp.next(results)
+                    tracks.extend(results['items'])
+    try:
+        if source_type == 'spotify':
+                try:
+                    import spotipy
+                    from spotipy.oauth2 import SpotifyClientCredentials
+                except ImportError:
+                    raise Exception("spotipy n'est pas installé.")
                 
-                entries = list(info['entries'])
-                total_items = len(entries)
+                from dotenv import load_dotenv
+                load_dotenv()
+                client_id = os.getenv("SPOTIPY_CLIENT_ID") or os.getenv("SPOTIFY_CLIENT_ID")
+                client_secret = os.getenv("SPOTIPY_CLIENT_SECRET") or os.getenv("SPOTIFY_CLIENT_SECRET")
+
+                if not client_id or not client_secret:
+                    raise Exception("Les identifiants Spotify (SPOTIPY_CLIENT_ID, SPOTIPY_CLIENT_SECRET) ne sont pas définis dans les variables d'environnement.")
+
+                sp = spotipy.Spotify(auth_manager=SpotifyClientCredentials(client_id=client_id,
+                                                                           client_secret=client_secret))
                 
-                for i, entry in enumerate(entries):
+                playlist_id = url.split('/')[-1].split('?')[0]
+                
+                if '/album/' in url:
                     try:
+                        results = sp.album_tracks(playlist_id)
+                        tracks = results['items']
+                        while results['next']:
+                            results = sp.next(results)
+                            tracks.extend(results['items'])
+                        
+                        # For albums, track info is directly in 'items'
+                        track_items = [{'track': t} for t in tracks]
+                    except Exception as e:
+                        if "404" in str(e):
+                            raise Exception("Cet album Spotify est introuvable ou privé. Vérifiez le lien ou rendez-le public.")
+                        raise e
+                else: # Assume playlist
+                    try:
+                        results = sp.playlist_items(playlist_id)
+                        track_items = results['items']
+                        while results['next']:
+                            results = sp.next(results)
+                            track_items.extend(results['items'])
+                    except Exception as e:
+                        if "404" in str(e):
+                            if 'pt=' in url:
+                                raise Exception("Cette playlist Spotify est introuvable. Il semble s'agir d'une playlist privée partagée avec un lien spécial (pt=...). Notre outil ne peut télécharger que des playlists publiques. Veuillez la rendre publique dans Spotify.")
+                            else:
+                                raise Exception("La playlist Spotify est introuvable ou privée (Erreur 404). Vérifiez le lien ou rendez-la publique.")
+                        raise e
+
+                total_items = len(track_items)
+                if total_items == 0:
+                    raise Exception("Aucune piste trouvée dans la playlist/album Spotify.")
+
+                for i, item in enumerate(track_items):
+                    try:
+                        track = item.get('track')
+                        if not track:
+                            print(f"Skipping item {i+1}: No track data found.")
+                            continue
+
+                        track_name = track.get('name')
+                        artists = ", ".join([artist['name'] for artist in track.get('artists', [])])
+                        search_query = f"{track_name} {artists}"
+                        
                         if progress_id and progress_dict is not None:
                             progress_dict[progress_id] = {
                                 'percent': (i / total_items) * 100,
                                 'status': 'downloading',
-                                'message': f'Téléchargement piste {i+1}/{total_items}'
+                                'message': f'Téléchargement piste {i+1}/{total_items}: "{track_name}"'
                             }
                         
-                        item_url = entry.get('url') or entry.get('webpage_url')
-                        if not item_url:
-                            if source_type == 'youtube':
-                                item_url = f"https://www.youtube.com/watch?v={entry['id']}"
-                            else:
-                                continue
+                        # Call the fallback downloader for each individual track
+                        # The custom_filename ensures the file is named correctly in the playlist directory
+                        output_filename = sanitize_filename(f"{track_name} - {artists}") + ".mp3"
+                        output_full_path = os.path.join(playlist_dir, output_filename)
 
-                        item_path, item_filename = download_func(item_url, os.path.join(playlist_dir, f"{i:03d}_{entry['title']}.mp3"))
+                        item_path, item_filename = download_youtube(
+                            f"ytsearch1:{search_query}",
+                            output_full_path,
+                            custom_filename=output_filename, # Pass the desired filename
+                            progress_id=None, # Do not update global progress for individual tracks
+                            progress_dict=None
+                        )
                         downloaded_files.append(item_path)
                         
                     except Exception as e:
-                        print(f"Erreur sur l'élément {i}: {e}")
+                        print(f"Erreur sur l'élément Spotify {i+1} ({track_name if 'track_name' in locals() else 'N/A'}): {e}")
                         continue
-        
-        if not downloaded_files:
-            raise Exception("Aucun fichier n'a pu être téléchargé de la playlist")
+        else: # YouTube or SoundCloud playlist
+            ydl_opts = {
+                'format': 'bestaudio/best',
+                'extract_flat': True, # Only extract info, don't download
+                'quiet': True,
+                'no_warnings': True,
+            }
             
-        zip_filename = f"{playlist_name}_compress.zip"
+            if source_type == 'youtube':
+                ydl_opts['extract_flat'] = 'in_playlist' # For YouTube, this is better for playlists
+            
+            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                info = ydl.extract_info(url, download=False)
+                
+                if 'entries' not in info:
+                    raise Exception("Aucune entrée trouvée dans la playlist.")
+                
+                total_items = len(info['entries'])
+                if total_items == 0:
+                    raise Exception("Aucune piste trouvée dans la playlist.")
+
+                for i, entry in enumerate(info['entries']):
+                    if entry is None:
+                        print(f"Skipping empty entry {i+1}")
+                        continue
+                    
+                    entry_url = entry.get('url')
+                    entry_title = entry.get('title', f"Track {i+1}")
+                    
+                    if not entry_url:
+                        print(f"Skipping entry {i+1} due to missing URL.")
+                        continue
+
+                    if progress_id and progress_dict is not None:
+                        progress_dict[progress_id] = {
+                            'percent': (i / total_items) * 100,
+                            'status': 'downloading',
+                            'message': f'Téléchargement piste {i+1}/{total_items}: "{entry_title}"'
+                        }
+                    
+                    output_filename = sanitize_filename(entry_title) + ".mp3"
+                    output_full_path = os.path.join(playlist_dir, output_filename)
+
+                    try:
+                        if source_type == 'youtube':
+                            item_path, item_filename = download_youtube(
+                                entry_url,
+                                output_full_path,
+                                custom_filename=output_filename,
+                                progress_id=None,
+                                progress_dict=None
+                            )
+                        elif source_type == 'soundcloud':
+                            item_path, item_filename = download_soundcloud(
+                                entry_url,
+                                output_full_path,
+                                custom_filename=output_filename,
+                                progress_id=None,
+                                progress_dict=None
+                            )
+                        downloaded_files.append(item_path)
+                    except Exception as e:
+                        print(f"Erreur sur l'élément {source_type} {i+1} ({entry_title}): {e}")
+                        continue
+
+        zip_filename = f"{playlist_name}.zip"
         zip_path = os.path.join(UPLOAD_FOLDER, zip_filename)
         
         shutil.make_archive(zip_path.replace('.zip', ''), 'zip', base_temp_dir, playlist_name)
@@ -431,7 +592,8 @@ def download_youtube(url, output_path, custom_filename=None, progress_id=None, p
         'quiet': False,
         'no_warnings': False,
         'progress_hooks': [progress_hook],
-        'ffmpeg_location': ffmpeg_location
+        'ffmpeg_location': ffmpeg_location,
+        'max_filesize': 500 * 1024 * 1024, # Maximum 500 MB
     }
     
     try:
@@ -520,9 +682,25 @@ def download_soundcloud(url, output_path, custom_filename=None, progress_id=None
         'quiet': False,
         'no_warnings': False,
         'progress_hooks': [progress_hook],
-        'ffmpeg_location': ffmpeg_location
+        'ffmpeg_location': ffmpeg_location,
+        'max_filesize': 500 * 1024 * 1024, # Maximum 500 MB
     }
     
+    # Check for search URL
+    if '/search' in url and '?q=' in url:
+        try:
+            parsed = urlparse(url)
+            query_params = parse_qs(parsed.query)
+            query = query_params.get('q', [None])[0]
+            if query:
+                print(f"[SoundCloud] Detected search URL, converting to scsearch1:{query}")
+                url = f"scsearch1:{query}"
+                # For search results, we might get a playlist-like object. 
+                # We want the first result.
+                ydl_opts['noplaylist'] = True 
+        except Exception as e:
+            print(f"[SoundCloud] Error parsing search URL: {e}")
+
     try:
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             try:
@@ -601,6 +779,13 @@ def download_spotify(url, output_path, custom_filename=None, progress_id=None, p
             '--bitrate', '320k',
             '--simple-tui',
         ]
+        
+        from dotenv import load_dotenv
+        load_dotenv()
+        client_id = os.getenv("SPOTIPY_CLIENT_ID") or os.getenv("SPOTIFY_CLIENT_ID")
+        client_secret = os.getenv("SPOTIPY_CLIENT_SECRET") or os.getenv("SPOTIFY_CLIENT_SECRET")
+        if client_id and client_secret:
+            cmd.extend(['--client-id', client_id, '--client-secret', client_secret])
 
         if os.path.exists(ffmpeg_exe):
             cmd.extend(['--ffmpeg', ffmpeg_exe])
@@ -922,10 +1107,23 @@ def extract_audio_segment(input_path, output_path, start_time, duration=10):
     return output_path
 
 
+def clean_music_title(title):
+    if not title:
+        return ""
+    import re
+    # Enlever (feat. Artist), [feat. Artist], - Radio Edit, etc.
+    cleaned = re.sub(r'(?i)\(feat[^)]+\)', '', title)
+    cleaned = re.sub(r'(?i)\[feat[^]]+\]', '', cleaned)
+    cleaned = re.sub(r'(?i)[(-]\s*(radio edit|remix|feat\..*)\b', '', cleaned)
+    return cleaned.strip()
+
 async def search_track_links(track_name, artist_name):
     """Search for track links on various platforms"""
     links = {}
     spotify_uri = None
+    
+    clean_track = clean_music_title(track_name)
+    clean_artist = clean_music_title(artist_name)
     
     # Try Spotify API first if credentials exist
     try:
@@ -942,8 +1140,13 @@ async def search_track_links(track_name, artist_name):
             auth_manager = SpotifyClientCredentials(client_id=client_id, client_secret=client_secret)
             sp = spotipy.Spotify(auth_manager=auth_manager)
             
-            query = f"track:{track_name} artist:{artist_name}"
-            results = sp.search(q=query, type='track', limit=1)
+            query_strict = f"track:{clean_track} artist:{clean_artist}"
+            results = sp.search(q=query_strict, type='track', limit=1)
+            
+            if not results['tracks']['items']:
+                query_loose = f"{clean_artist} {clean_track}"
+                print(f"[Spotify] Recherche stricte échouée, essai souple: {query_loose}")
+                results = sp.search(q=query_loose, type='track', limit=1)
             
             if results['tracks']['items']:
                 track = results['tracks']['items'][0]
@@ -953,7 +1156,7 @@ async def search_track_links(track_name, artist_name):
                 links['spotify_uri'] = spotify_uri
                 print(f"[Spotify] URI trouvé: {spotify_uri}")
             else:
-                print(f"[Spotify] Aucune piste trouvée via API pour {query}")
+                print(f"[Spotify] Aucune piste trouvée via API pour {clean_track}")
         else:
             print(f"[Spotify] Pas d'identifiants (SPOTIFY_CLIENT_ID/SECRET) dans .env")
     except Exception as e:
@@ -967,7 +1170,7 @@ async def search_track_links(track_name, artist_name):
             'extract_flat': True,
         }
         
-        search_query = f"{artist_name} {track_name}" if artist_name else track_name
+        search_query = f"{clean_artist} {clean_track}" if clean_artist else clean_track
         
         # Youtube search
         try:
@@ -1012,6 +1215,7 @@ def download_for_recognition(url, output_path):
         'quiet': False,
         'ffmpeg_location': ffmpeg_location,
         'keepvideo': False,
+        'max_filesize': 500 * 1024 * 1024, # Maximum 500 MB
     }
     
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
@@ -1078,7 +1282,19 @@ async def recognize_music_from_url(url, timecodes=None, progress_id=None, progre
             raise Exception("URL non supportée")
         
         # Download audio
-        final_path = download_for_recognition(url, temp_audio_path)
+        print(f"[Recognition] Téléchargement depuis {source_type}...")
+        
+        if source_type == 'youtube':
+            final_path, _ = download_youtube(url, temp_audio_path, progress_id=progress_id, progress_dict=progress_dict)
+        elif source_type == 'soundcloud':
+            final_path, _ = download_soundcloud(url, temp_audio_path, progress_id=progress_id, progress_dict=progress_dict)
+        elif source_type == 'spotify':
+            final_path, _ = download_spotify(url, temp_audio_path, progress_id=progress_id, progress_dict=progress_dict)
+        elif source_type == 'instagram':
+            final_path, _ = download_instagram(url, temp_audio_path, progress_id=progress_id, progress_dict=progress_dict)
+        else:
+            # Fallback
+            final_path = download_for_recognition(url, temp_audio_path)
         
         # Default timecodes
         if not timecodes:
