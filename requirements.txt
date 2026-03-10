@@ -10,3 +10,5 @@ spotipy
 discord.py
 python-dotenv
 shazamio
+pydub
+mutagen

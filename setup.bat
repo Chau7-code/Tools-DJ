@@ -12,6 +12,9 @@ if %errorlevel% neq 0 (
     exit /b
 )
 
+echo Mise a jour de pip...
+python -m pip install --upgrade pip >nul 2>&1
+
 echo Installation des bibliotheques Python...
 pip install -r requirements.txt
 

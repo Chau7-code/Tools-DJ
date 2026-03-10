@@ -1,4 +1,4 @@
-from fastapi import FastAPI, Request, BackgroundTasks, Form, Body, HTTPException, Query, Response
+from fastapi import FastAPI, Request, BackgroundTasks, Form, Body, HTTPException, Query, Response, UploadFile, File
 from fastapi.responses import HTMLResponse, JSONResponse, FileResponse, StreamingResponse
 from fastapi.templating import Jinja2Templates
 from fastapi.staticfiles import StaticFiles
@@ -11,8 +11,9 @@ import time
 import json
 from contextlib import asynccontextmanager
 import downloader
-import mellangeur
+from scripts import mellangeur
 from dotenv import load_dotenv
+import shutil
 
 load_dotenv()
 
@@ -404,6 +405,85 @@ async def find_music(background_tasks: BackgroundTasks, data: dict = Body(...)):
         await asyncio.to_thread(process_identification_sync)
 
     background_tasks.add_task(run_identification)
+    
+    return {'success': True, 'progress_id': progress_id}
+
+
+@app.post("/find-upload")
+async def find_music_upload(
+    background_tasks: BackgroundTasks, 
+    file: UploadFile = File(...), 
+    timecodes: str = Form(None)
+):
+    """Endpoint de reconnaissance musicale via upload de fichier"""
+    if not file.filename:
+        return JSONResponse(status_code=400, content={'error': 'Aucun fichier sélectionné'})
+        
+    timecodes_list = None
+    if timecodes:
+        try:
+            parts = timecodes.replace(',', ';').split(';')
+            timecodes_list = [downloader.parse_timecode(tc.strip()) for tc in parts if tc.strip()]
+        except Exception as e:
+            return JSONResponse(status_code=400, content={'error': f'Format de timecode invalide: {str(e)}'})
+
+    progress_id = str(uuid.uuid4())
+    temp_file_path = os.path.join(UPLOAD_FOLDER, f"{progress_id}_{file.filename}")
+    
+    # Save the uploaded file temporarily
+    try:
+        with open(temp_file_path, "wb") as buffer:
+            shutil.copyfileobj(file.file, buffer)
+    except Exception as e:
+        return JSONResponse(status_code=500, content={'error': f'Erreur lors de la sauvegarde du fichier: {str(e)}'})
+
+    # Validate the audio file
+    is_valid, error_msg = downloader.validate_audio_file(temp_file_path)
+    if not is_valid:
+        if os.path.exists(temp_file_path):
+            os.remove(temp_file_path)
+        return JSONResponse(status_code=400, content={'error': error_msg})
+
+    download_progress[progress_id] = {
+        'status': 'analyzing',
+        'percent': 0,
+        'message': 'Analyse du fichier audio en cours...'
+    }
+    
+    def process_file_identification_sync():
+        try:
+            result = downloader.recognize_music_from_file_sync(
+                temp_file_path, 
+                timecodes=timecodes_list,
+                progress_id=progress_id,
+                progress_dict=download_progress
+            )
+            
+            if not result['found']:
+                download_progress[progress_id] = {
+                    'status': 'completed_find',
+                    'found': False,
+                    'message': result.get('message', 'Aucune musique trouvée')
+                }
+            else:
+                download_progress[progress_id] = {
+                    'status': 'completed_find',
+                    'found': True,
+                    'results': result.get('results', []),
+                    'message': 'Analyse terminée'
+                }
+                
+        except Exception as e:
+            print(f"Erreur find-upload: {e}")
+            download_progress[progress_id] = {
+                'status': 'error',
+                'message': str(e)
+            }
+
+    async def run_file_identification():
+        await asyncio.to_thread(process_file_identification_sync)
+
+    background_tasks.add_task(run_file_identification)
     
     return {'success': True, 'progress_id': progress_id}
 

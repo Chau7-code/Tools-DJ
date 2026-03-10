@@ -1,5 +1,6 @@
 <!DOCTYPE html>
 <html lang="fr" class="dark">
+
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -35,10 +36,10 @@
     <style>
         body {
             background-color: #0f172a;
-            background-image: 
-                radial-gradient(at 0% 0%, hsla(253,16%,7%,1) 0, transparent 50%), 
-                radial-gradient(at 50% 0%, hsla(225,39%,30%,1) 0, transparent 50%), 
-                radial-gradient(at 100% 0%, hsla(339,49%,30%,1) 0, transparent 50%);
+            background-image:
+                radial-gradient(at 0% 0%, hsla(253, 16%, 7%, 1) 0, transparent 50%),
+                radial-gradient(at 50% 0%, hsla(225, 39%, 30%, 1) 0, transparent 50%),
+                radial-gradient(at 100% 0%, hsla(339, 49%, 30%, 1) 0, transparent 50%);
             background-attachment: fixed;
             background-size: cover;
             min-height: 100vh;
@@ -56,29 +57,33 @@
         ::-webkit-scrollbar {
             width: 8px;
         }
+
         ::-webkit-scrollbar-track {
-            background: rgba(0,0,0,0.1);
+            background: rgba(0, 0, 0, 0.1);
         }
+
         ::-webkit-scrollbar-thumb {
-            background: rgba(255,255,255,0.2);
+            background: rgba(255, 255, 255, 0.2);
             border-radius: 4px;
         }
+
         ::-webkit-scrollbar-thumb:hover {
-            background: rgba(255,255,255,0.4);
+            background: rgba(255, 255, 255, 0.4);
         }
-        
+
         .tab-btn.active {
             background: linear-gradient(135deg, #6366f1 0%, #a855f7 100%);
             color: white;
             box-shadow: 0 4px 15px rgba(99, 102, 241, 0.4);
             border-color: transparent;
         }
-        
+
         .section {
             display: none;
             opacity: 0;
             transition: opacity 0.3s ease-in-out;
         }
+
         .section.active {
             display: block;
             opacity: 1;
@@ -86,8 +91,15 @@
         }
 
         @keyframes fadeIn {
-            from { opacity: 0; transform: translateY(10px); }
-            to { opacity: 1; transform: translateY(0); }
+            from {
+                opacity: 0;
+                transform: translateY(10px);
+            }
+
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
         }
 
         input {
@@ -95,62 +107,90 @@
             border: 1px solid rgba(255, 255, 255, 0.1);
             color: white;
         }
+
         input:focus {
             background-color: rgba(255, 255, 255, 0.1);
             border-color: #8b5cf6;
             outline: none;
             box-shadow: 0 0 0 3px rgba(139, 92, 246, 0.2);
         }
-        
+
         .progress-striped {
             background-image: linear-gradient(45deg, rgba(255, 255, 255, 0.15) 25%, transparent 25%, transparent 50%, rgba(255, 255, 255, 0.15) 50%, rgba(255, 255, 255, 0.15) 75%, transparent 75%, transparent);
             background-size: 1rem 1rem;
             animation: progress-slide 1s linear infinite;
         }
-        
+
         @keyframes progress-slide {
-            from { background-position: 1rem 0; }
-            to { background-position: 0 0; }
+            from {
+                background-position: 1rem 0;
+            }
+
+            to {
+                background-position: 0 0;
+            }
         }
     </style>
 </head>
+
 <body class="text-gray-200 antialiased font-sans p-4 md:p-8 flex items-center justify-center">
 
     <div class="glass-card w-full max-w-2xl rounded-3xl p-6 md:p-10 relative overflow-hidden">
         <!-- Decorative blobs -->
-        <div class="absolute -top-24 -right-24 w-48 h-48 bg-purple-500 rounded-full mix-blend-multiply filter blur-3xl opacity-30 animate-pulse-glow"></div>
-        <div class="absolute -bottom-24 -left-24 w-48 h-48 bg-indigo-500 rounded-full mix-blend-multiply filter blur-3xl opacity-30 animate-pulse-glow" style="animation-delay: 1s;"></div>
+        <div
+            class="absolute -top-24 -right-24 w-48 h-48 bg-purple-500 rounded-full mix-blend-multiply filter blur-3xl opacity-30 animate-pulse-glow">
+        </div>
+        <div class="absolute -bottom-24 -left-24 w-48 h-48 bg-indigo-500 rounded-full mix-blend-multiply filter blur-3xl opacity-30 animate-pulse-glow"
+            style="animation-delay: 1s;"></div>
 
         <div class="relative z-10">
             <div class="text-center mb-10">
-                <h1 class="text-4xl md:text-5xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-indigo-400 via-purple-400 to-pink-400 mb-2 tracking-tight">Antigravity Music</h1>
-                <p class="text-gray-400 text-sm md:text-base">Téléchargez, identifiez et mixez l'audio en toute simplicité</p>
+                <h1
+                    class="text-4xl md:text-5xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-indigo-400 via-purple-400 to-pink-400 mb-2 tracking-tight">
+                    Antigravity Music</h1>
+                <p class="text-gray-400 text-sm md:text-base">Téléchargez, identifiez et mixez l'audio en toute
+                    simplicité</p>
             </div>
 
             <!-- Tabs -->
             <div class="flex flex-wrap bg-white/5 p-1.5 rounded-2xl mb-8 border border-white/10 gap-1">
-                <button class="tab-btn active flex-1 py-3 px-4 rounded-xl text-sm font-medium text-gray-300 hover:text-white transition-all border border-transparent" onclick="switchTab('convert')">🚀 Convertisseur</button>
-                <button class="tab-btn flex-1 py-3 px-4 rounded-xl text-sm font-medium text-gray-300 hover:text-white transition-all border border-transparent" onclick="switchTab('find')">🔍 Identifier</button>
-                <button class="tab-btn flex-1 py-3 px-4 rounded-xl text-sm font-medium text-gray-300 hover:text-white transition-all border border-transparent" onclick="switchTab('mix')">🎛️ Mélangeur</button>
+                <button
+                    class="tab-btn active flex-1 py-3 px-4 rounded-xl text-sm font-medium text-gray-300 hover:text-white transition-all border border-transparent"
+                    onclick="switchTab('convert')">🚀 Convertisseur</button>
+                <button
+                    class="tab-btn flex-1 py-3 px-4 rounded-xl text-sm font-medium text-gray-300 hover:text-white transition-all border border-transparent"
+                    onclick="switchTab('find')">🔍 Identifier</button>
+                <button
+                    class="tab-btn flex-1 py-3 px-4 rounded-xl text-sm font-medium text-gray-300 hover:text-white transition-all border border-transparent"
+                    onclick="switchTab('mix')">🎛️ Mélangeur</button>
             </div>
 
             <!-- SECTION : CONVERT -->
             <div id="convert-section" class="section active">
                 <div class="flex justify-center flex-wrap gap-3 mb-6">
-                    <span class="px-3 py-1 text-xs font-semibold rounded-full bg-red-500/20 text-red-300 border border-red-500/30">YouTube</span>
-                    <span class="px-3 py-1 text-xs font-semibold rounded-full bg-orange-500/20 text-orange-300 border border-orange-500/30">SoundCloud</span>
-                    <span class="px-3 py-1 text-xs font-semibold rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">Spotify</span>
-                    <span class="px-3 py-1 text-xs font-semibold rounded-full bg-pink-500/20 text-pink-300 border border-pink-500/30">Instagram</span>
+                    <span
+                        class="px-3 py-1 text-xs font-semibold rounded-full bg-red-500/20 text-red-300 border border-red-500/30">YouTube</span>
+                    <span
+                        class="px-3 py-1 text-xs font-semibold rounded-full bg-orange-500/20 text-orange-300 border border-orange-500/30">SoundCloud</span>
+                    <span
+                        class="px-3 py-1 text-xs font-semibold rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">Spotify</span>
+                    <span
+                        class="px-3 py-1 text-xs font-semibold rounded-full bg-pink-500/20 text-pink-300 border border-pink-500/30">Instagram</span>
                 </div>
 
                 <div class="space-y-4">
                     <div>
-                        <input type="text" id="urlInput" class="w-full px-5 py-4 rounded-xl text-md transition-all placeholder-gray-500" placeholder="Collez l'URL de votre musique ici...">
+                        <input type="text" id="urlInput"
+                            class="w-full px-5 py-4 rounded-xl text-md transition-all placeholder-gray-500"
+                            placeholder="Collez l'URL de votre musique ici...">
                     </div>
                     <div>
-                        <input type="text" id="fileNameInput" class="w-full px-5 py-4 rounded-xl text-md transition-all placeholder-gray-500" placeholder="Nom personnalisé (optionnel)">
+                        <input type="text" id="fileNameInput"
+                            class="w-full px-5 py-4 rounded-xl text-md transition-all placeholder-gray-500"
+                            placeholder="Nom personnalisé (optionnel)">
                     </div>
-                    <button id="convertBtn" onclick="convertUrl()" class="w-full py-4 mt-2 rounded-xl bg-gradient-to-r from-indigo-500 to-purple-600 text-white font-bold text-lg hover:from-indigo-400 hover:to-purple-500 transform hover:-translate-y-1 transition-all shadow-lg hover:shadow-indigo-500/50">
+                    <button id="convertBtn" onclick="convertUrl()"
+                        class="w-full py-4 mt-2 rounded-xl bg-gradient-to-r from-indigo-500 to-purple-600 text-white font-bold text-lg hover:from-indigo-400 hover:to-purple-500 transform hover:-translate-y-1 transition-all shadow-lg hover:shadow-indigo-500/50">
                         Convertir en MP3
                     </button>
                 </div>
@@ -160,31 +200,59 @@
             <div id="find-section" class="section">
                 <div class="space-y-4">
                     <div>
-                        <input type="text" id="findUrlInput" class="w-full px-5 py-4 rounded-xl text-md transition-all placeholder-gray-500" placeholder="URL de la vidéo à analyser...">
+                        <input type="text" id="findUrlInput"
+                            class="w-full px-5 py-4 rounded-xl text-md transition-all placeholder-gray-500"
+                            placeholder="URL de la vidéo à analyser...">
+                    </div>
+
+                    <div class="flex items-center">
+                        <div class="h-px bg-white/20 flex-1"></div>
+                        <span class="px-4 text-xs font-bold text-gray-500 uppercase">OU</span>
+                        <div class="h-px bg-white/20 flex-1"></div>
+                    </div>
+
+                    <div>
+                        <label class="block mb-2 text-sm font-medium text-gray-400">Choisir un fichier audio local
+                            :</label>
+                        <input type="file" id="findFileInput" accept="audio/*" class="w-full px-4 py-3 rounded-xl text-sm transition-all bg-white/5 border border-white/10 text-gray-300
+                            file:mr-4 file:py-2 file:px-4
+                            file:rounded-full file:border-0
+                            file:text-sm file:font-semibold
+                            file:bg-indigo-500/20 file:text-indigo-300
+                            hover:file:bg-indigo-500/30">
                     </div>
                     <div>
-                        <input type="text" id="timecodesInput" class="w-full px-5 py-4 rounded-xl text-md transition-all placeholder-gray-500" placeholder="Timecodes optionnels (ex: 30, 60, 90)">
+                        <input type="text" id="timecodesInput"
+                            class="w-full px-5 py-4 rounded-xl text-md transition-all placeholder-gray-500"
+                            placeholder="Timecodes optionnels (ex: 30, 60, 90)">
                     </div>
-                    <label class="flex items-center space-x-3 cursor-pointer bg-white/5 p-4 rounded-xl border border-white/10 hover:bg-white/10 transition-colors">
-                        <input type="checkbox" id="downloadFound" class="w-5 h-5 rounded text-indigo-500 focus:ring-indigo-500 bg-gray-800 border-gray-600">
+                    <label
+                        class="flex items-center space-x-3 cursor-pointer bg-white/5 p-4 rounded-xl border border-white/10 hover:bg-white/10 transition-colors">
+                        <input type="checkbox" id="downloadFound"
+                            class="w-5 h-5 rounded text-indigo-500 focus:ring-indigo-500 bg-gray-800 border-gray-600">
                         <span class="text-sm font-medium text-gray-300">Télécharger la musique si trouvée</span>
                     </label>
 
-                    <button id="findBtn" onclick="findMusic()" class="w-full py-4 mt-2 rounded-xl bg-gradient-to-r from-blue-500 to-cyan-600 text-white font-bold text-lg hover:from-blue-400 hover:to-cyan-500 transform hover:-translate-y-1 transition-all shadow-lg hover:shadow-cyan-500/50">
+                    <button id="findBtn" onclick="findMusic()"
+                        class="w-full py-4 mt-2 rounded-xl bg-gradient-to-r from-blue-500 to-cyan-600 text-white font-bold text-lg hover:from-blue-400 hover:to-cyan-500 transform hover:-translate-y-1 transition-all shadow-lg hover:shadow-cyan-500/50">
                         Rechercher avec Shazam
                     </button>
                 </div>
-                
+
                 <div id="find-results" class="mt-6 flex flex-col gap-4"></div>
             </div>
 
             <!-- SECTION : MIX -->
             <div id="mix-section" class="section">
                 <div class="bg-white/5 p-5 rounded-2xl border border-white/10 mb-6">
-                    <h3 class="text-sm font-bold text-gray-400 uppercase tracking-wider mb-4">🔐 Configuration Spotify</h3>
+                    <h3 class="text-sm font-bold text-gray-400 uppercase tracking-wider mb-4">🔐 Configuration Spotify
+                    </h3>
                     <div class="space-y-3">
-                        <input type="text" id="clientIdInput" class="w-full px-4 py-3 rounded-lg text-sm transition-all" placeholder="Spotify Client ID" value="{{ client_id }}">
-                        <input type="text" id="clientSecretInput" class="w-full px-4 py-3 rounded-lg text-sm transition-all" placeholder="Spotify Client Secret" value="{{ client_secret }}">
+                        <input type="text" id="clientIdInput" class="w-full px-4 py-3 rounded-lg text-sm transition-all"
+                            placeholder="Spotify Client ID" value="{{ client_id }}">
+                        <input type="text" id="clientSecretInput"
+                            class="w-full px-4 py-3 rounded-lg text-sm transition-all"
+                            placeholder="Spotify Client Secret" value="{{ client_secret }}">
                     </div>
                 </div>
 
@@ -192,15 +260,18 @@
                     <h3 class="text-sm font-bold text-gray-400 uppercase tracking-wider mb-4">🎵 Vos Playlists</h3>
                     <div id="playlist-inputs" class="space-y-3">
                         <div class="flex gap-2">
-                            <input type="text" class="w-full px-4 py-3 rounded-lg text-sm transition-all playlist-url" placeholder="URL Playlist Spotify #1">
+                            <input type="text" class="w-full px-4 py-3 rounded-lg text-sm transition-all playlist-url"
+                                placeholder="URL Playlist Spotify #1">
                         </div>
                     </div>
-                    <button onclick="addPlaylistInput()" class="mt-4 w-full py-3 rounded-lg bg-white/10 text-gray-300 text-sm font-medium hover:bg-white/20 transition-all border border-white/5 border-dashed">
+                    <button onclick="addPlaylistInput()"
+                        class="mt-4 w-full py-3 rounded-lg bg-white/10 text-gray-300 text-sm font-medium hover:bg-white/20 transition-all border border-white/5 border-dashed">
                         + Ajouter une playlist
                     </button>
                 </div>
 
-                <button id="mixBtn" onclick="mixPlaylists()" class="w-full py-4 mt-2 rounded-xl bg-gradient-to-r from-emerald-500 to-teal-600 text-white font-bold text-lg hover:from-emerald-400 hover:to-teal-500 transform hover:-translate-y-1 transition-all shadow-lg hover:shadow-teal-500/50">
+                <button id="mixBtn" onclick="mixPlaylists()"
+                    class="w-full py-4 mt-2 rounded-xl bg-gradient-to-r from-emerald-500 to-teal-600 text-white font-bold text-lg hover:from-emerald-400 hover:to-teal-500 transform hover:-translate-y-1 transition-all shadow-lg hover:shadow-teal-500/50">
                     Mélanger les Playlists
                 </button>
                 <div id="mix-results" class="mt-4 hidden"></div>
@@ -208,10 +279,14 @@
 
             <!-- STATUS & PROGRESS -->
             <div id="status-area" class="mt-8 hidden">
-                <div id="status" class="p-4 rounded-xl text-sm font-medium flex items-center justify-between border"></div>
-                
-                <div id="progress-container" class="mt-4 h-6 w-full bg-gray-800 rounded-full overflow-hidden border border-gray-700 hidden shadow-inner relative">
-                    <div id="progress-bar" class="h-full bg-gradient-to-r from-indigo-500 via-purple-500 to-pink-500 progress-striped w-0 transition-all duration-300 ease-out flex items-center justify-end pr-2 text-xs font-bold text-white shadow-[0_0_15px_rgba(139,92,246,0.7)]">0%</div>
+                <div id="status" class="p-4 rounded-xl text-sm font-medium flex items-center justify-between border">
+                </div>
+
+                <div id="progress-container"
+                    class="mt-4 h-6 w-full bg-gray-800 rounded-full overflow-hidden border border-gray-700 hidden shadow-inner relative">
+                    <div id="progress-bar"
+                        class="h-full bg-gradient-to-r from-indigo-500 via-purple-500 to-pink-500 progress-striped w-0 transition-all duration-300 ease-out flex items-center justify-end pr-2 text-xs font-bold text-white shadow-[0_0_15px_rgba(139,92,246,0.7)]">
+                        0%</div>
                 </div>
             </div>
         </div>
@@ -221,13 +296,22 @@
     <script>
         function switchTab(tabName) {
             document.querySelectorAll('.tab-btn').forEach(btn => btn.classList.remove('active'));
-            event.target.classList.add('active');
+            if (event && event.target) {
+                const btn = event.target.closest('.tab-btn') || event.target;
+                btn.classList.add('active');
+            }
 
             document.querySelectorAll('.section').forEach(section => {
-                section.classList.remove('active');
-                setTimeout(() => section.style.display = 'none', 300); // Wait for fade out
+                if (section.id !== `${tabName}-section`) {
+                    section.classList.remove('active');
+                    setTimeout(() => {
+                        if (!section.classList.contains('active')) {
+                            section.style.display = 'none';
+                        }
+                    }, 300); // Wait for fade out
+                }
             });
-            
+
             setTimeout(() => {
                 const target = document.getElementById(`${tabName}-section`);
                 target.style.display = 'block';
@@ -243,10 +327,10 @@
             const statusArea = document.getElementById('status-area');
             const statusDiv = document.getElementById('status');
             const progressContainer = document.getElementById('progress-container');
-            
+
             statusArea.classList.remove('hidden');
             statusDiv.innerHTML = message;
-            
+
             if (type === 'error') {
                 statusDiv.className = 'p-4 rounded-xl text-sm font-medium bg-red-500/20 text-red-200 border border-red-500/50';
                 progressContainer.classList.add('hidden');
@@ -260,6 +344,7 @@
 
         async function findMusic() {
             const urlInput = document.getElementById('findUrlInput');
+            const fileInput = document.getElementById('findFileInput');
             const timecodesInput = document.getElementById('timecodesInput');
             const downloadCheckbox = document.getElementById('downloadFound');
             const findBtn = document.getElementById('findBtn');
@@ -268,20 +353,36 @@
             const url = urlInput.value.trim();
             const timecodes = timecodesInput.value.trim();
             const doDownload = downloadCheckbox.checked;
+            const file = fileInput.files[0];
 
-            if (!url) { showStatus('⚠️ Veuillez entrer une URL', 'error'); return; }
+            if (!url && !file) { showStatus('⚠️ Veuillez entrer une URL ou choisir un fichier', 'error'); return; }
 
             resultsDiv.innerHTML = '';
             findBtn.disabled = true;
             findBtn.innerHTML = '<span class="animate-pulse">Recherche en cours... 🎶</span>';
-            showStatus('Analyse de l\'audio et recherche en cours...', 'loading');
+            showStatus('Analyse audio et recherche en cours...', 'loading');
 
             try {
-                const response = await fetch('/find', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ url: url, timecodes: timecodes, download: doDownload })
-                });
+                let response;
+
+                if (file) {
+                    // Handle file upload
+                    const formData = new FormData();
+                    formData.append('file', file);
+                    if (timecodes) formData.append('timecodes', timecodes);
+
+                    response = await fetch('/find-upload', {
+                        method: 'POST',
+                        body: formData
+                    });
+                } else {
+                    // Handle URL
+                    response = await fetch('/find', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ url: url, timecodes: timecodes, download: doDownload })
+                    });
+                }
 
                 const data = await response.json();
 
@@ -309,7 +410,7 @@
             convertBtn.disabled = true;
             convertBtn.innerHTML = '<span class="animate-pulse">⏳ Préparation...</span>';
             showStatus('Analyse du lien et conversion en cours...', 'loading');
-            
+
             try {
                 const response = await fetch('/convert', {
                     method: 'POST',
@@ -369,7 +470,7 @@
                                 📥 Télécharger ${data.is_zip ? 'le ZIP' : 'le MP3'}
                             </a>
                         </div>`;
-                    
+
                     showStatus(successHtml, 'success');
 
                     if (type === 'convert') {
@@ -390,16 +491,16 @@
                     document.getElementById('progress-container').classList.remove('hidden');
                     const progressBar = document.getElementById('progress-bar');
                     const percent = Math.max(Math.round(data.percent || 0), 2);
-                    
+
                     progressBar.style.width = percent + '%';
                     progressBar.innerHTML = percent > 5 ? percent + '%' : '';
 
                     let msg = data.message || 'Traitement en cours...';
                     if (data.status === 'downloading' && percent > 0) msg = `⬇️ Téléchargement... (${percent}%)`;
                     else if (data.status === 'converting') msg = `⚙️ Conversion asynchrone...`;
-                    
+
                     document.getElementById('status').innerHTML = msg;
-                    
+
                     if (type === 'convert') document.getElementById('convertBtn').innerHTML = `<span class="animate-pulse">${data.status === 'converting' ? 'Conversion...' : 'Téléchargement...'}</span>`;
                 }
             };
@@ -413,9 +514,9 @@
                 try {
                     const response = await fetch(`/check-progress/${progressId}`);
                     if (response.ok) handleProgressUpdate(await response.json());
-                } catch (error) {}
+                } catch (error) { }
             };
-            
+
             eventSource.onerror = function () {
                 if (eventSource.readyState === EventSource.CLOSED && !checkInterval) {
                     checkInterval = setInterval(checkCompletion, 2000);
@@ -462,7 +563,7 @@
         function addPlaylistInput() {
             const container = document.getElementById('playlist-inputs');
             const count = container.querySelectorAll('.playlist-url').length + 1;
-            
+
             const div = document.createElement('div');
             div.className = 'flex gap-2 animate-[fadeIn_0.3s_ease-out]';
             div.innerHTML = `
@@ -493,7 +594,7 @@
                     body: JSON.stringify({ client_id: clientId, client_secret: clientSecret, playlist_urls: urls })
                 });
                 const data = await response.json();
-                
+
                 if (response.ok && data.success) {
                     showStatus(`
                         <div class="space-y-3">
@@ -517,4 +618,5 @@
         document.getElementById('findUrlInput').addEventListener('keypress', e => e.key === 'Enter' && findMusic());
     </script>
 </body>
+
 </html>

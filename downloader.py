@@ -37,15 +37,15 @@ def get_local_ffmpeg_path():
 
 def check_ffmpeg():
     """Vérifie si FFmpeg est disponible et retourne le chemin si trouvé"""
-    # D'abord vérifier FFmpeg local
-    local_ffmpeg = get_local_ffmpeg_path()
-    if local_ffmpeg:
-        return local_ffmpeg
-    
-    # Ensuite, essayer de trouver FFmpeg dans le PATH
+    # Essayer de trouver FFmpeg dans le PATH d'abord (Linux favorise ça)
     ffmpeg_path = shutil.which('ffmpeg')
     if ffmpeg_path:
         return os.path.dirname(ffmpeg_path)
+
+    # Ensuite vérifier FFmpeg local
+    local_ffmpeg = get_local_ffmpeg_path()
+    if local_ffmpeg:
+        return local_ffmpeg
     
     # Vérifier les emplacements communs sur Windows
     if os.name == 'nt':
@@ -59,13 +59,13 @@ def check_ffmpeg():
             if os.path.exists(os.path.join(path, 'ffmpeg.exe')):
                 return path
     
-    # Essayer de lancer ffmpeg pour vérifier s'il est dans le PATH
+    # Essayer de lancer ffmpeg pour vérifier s'il est dans le PATH sans shutil.which
     try:
         subprocess.run(['ffmpeg', '-version'], 
                       capture_output=True, 
                       timeout=5,
                       check=True)
-        return None  # FFmpeg est dans le PATH
+        return "system"  # FFmpeg est dans le PATH
     except (subprocess.TimeoutExpired, subprocess.CalledProcessError, FileNotFoundError):
         return None
 
@@ -139,6 +139,8 @@ def ensure_ffmpeg():
     """S'assure que FFmpeg est disponible, le télécharge si nécessaire (synchrone)"""
     # Vérifier d'abord si FFmpeg existe
     ffmpeg_location = check_ffmpeg()
+    if ffmpeg_location == "system":
+        return "system"  # On va utiliser juste "ffmpeg" dans les appels
     if ffmpeg_location is not None:
         # Convertir en chemin absolu
         return os.path.abspath(ffmpeg_location)
@@ -157,12 +159,14 @@ def ensure_ffmpeg():
         else:
             raise Exception("Impossible de télécharger FFmpeg automatiquement. Veuillez l'installer manuellement.")
     
-    raise Exception("FFmpeg n'est pas installé. Sur Linux/Mac, installez-le avec: sudo apt-get install ffmpeg ou brew install ffmpeg")
+    raise Exception("FFmpeg n'est pas installé. Sur Linux (Armbian), installez-le avec: sudo apt-get install ffmpeg")
 
 def get_ffmpeg_exe_path():
     """Retourne le chemin complet vers l'exécutable FFmpeg"""
     try:
         ffmpeg_dir = ensure_ffmpeg()
+        if ffmpeg_dir == "system":
+            return "ffmpeg"
         if os.name == 'nt':
             return os.path.join(ffmpeg_dir, 'ffmpeg.exe')
         else:
@@ -632,7 +636,7 @@ def download_youtube(url, output_path, custom_filename=None, progress_id=None, p
     except Exception as e:
         raise Exception(f"Erreur lors du téléchargement YouTube: {str(e)}")
 
-def download_soundcloud(url, output_path, custom_filename=None, progress_id=None, progress_dict=None):
+def download_soundcloud(url, output_path, custom_filename=None, progress_id=None, progress_dict=None, sc_cookies_file=None):
     base_path = output_path.replace('.mp3', '')
     
     try:
@@ -686,6 +690,11 @@ def download_soundcloud(url, output_path, custom_filename=None, progress_id=None
         'max_filesize': 500 * 1024 * 1024, # Maximum 500 MB
     }
     
+    # Authentification SoundCloud via cookies (pour les abonnes Go+)
+    if sc_cookies_file and os.path.exists(sc_cookies_file):
+        ydl_opts['cookiefile'] = sc_cookies_file
+        print(f"[SoundCloud] 🔓 Cookies chargés depuis : {sc_cookies_file}")
+    
     # Check for search URL
     if '/search' in url and '?q=' in url:
         try:
@@ -709,10 +718,15 @@ def download_soundcloud(url, output_path, custom_filename=None, progress_id=None
                     raise Exception("Impossible d'extraire les informations.")
                 
                 title = info.get('title', 'sound')
+                duration = info.get('duration', None)  # Durée en secondes
                 if custom_filename:
                     final_filename = sanitize_filename(custom_filename)
                 else:
                     final_filename = sanitize_filename(title)
+                
+                # Détecter les prévisualisations de 30 secondes (sons payants SoundCloud Go+)
+                if duration is not None and duration < 60:
+                    raise Exception(f"PREVIEW_ONLY:{duration:.0f}s - Ce son est une prévisualisation SoundCloud (< 60s). Utilisez un compte Go+ avec des cookies.")
                 
             except Exception as e:
                 raise Exception(f"Erreur SoundCloud info: {str(e)}")
@@ -1259,6 +1273,190 @@ def recognize_music_from_url_sync(url, timecodes=None, progress_id=None, progres
         
     return asyncio.run(recognize_music_from_url(url, timecodes, progress_id, progress_dict, keep_file))
 
+def validate_audio_file(file_path):
+    """
+    Validates an uploaded file to ensure it's a real audio file and doesn't contain malicious code.
+    Returns (True, None) if valid, (False, error_message) if invalid.
+    """
+    if not os.path.exists(file_path):
+        return False, "Fichier introuvable"
+
+    file_size = os.path.getsize(file_path)
+    if file_size > 50 * 1024 * 1024:  # 50MB max for uploaded audio
+        return False, "Le fichier est trop volumineux (max 50MB)"
+        
+    # Check Magic Numbers (first few bytes)
+    # Common audio magic numbers:
+    # ID3 (MP3): 49 44 33
+    # M4A: ... 66 74 79 70 4D 34 41
+    # RIFF (WAV): 52 49 46 46
+    # OGG: 4F 67 67 53
+    # FLAC: 66 4C 61 43
+    # WEBM: 1A 45 DF A3
+    
+    try:
+        with open(file_path, 'rb') as f:
+            header = f.read(16)
+            
+            is_valid_header = False
+            
+            # MP3 (ID3)
+            if header.startswith(b'ID3'):
+                is_valid_header = True
+            # MP3 (without ID3, ADTS sync word usually FF FB / FF F3)
+            elif len(header) >= 2 and header[0] == 0xFF and (header[1] & 0xE0) == 0xE0:
+                is_valid_header = True
+            # WAV
+            elif header.startswith(b'RIFF'):
+                is_valid_header = True
+            # OGG
+            elif header.startswith(b'OggS'):
+                is_valid_header = True
+            # FLAC
+            elif header.startswith(b'fLaC'):
+                is_valid_header = True
+            # M4A / MP4
+            elif b'ftyp' in header:
+                is_valid_header = True
+            # WEBM / MKV
+            elif header.startswith(b'\x1a\x45\xdf\xa3'):
+                is_valid_header = True
+
+            if not is_valid_header:
+                return False, "Type de fichier audio non supporté ou invalide (entête incorrecte)"
+                
+            # Malware/PHP scanning
+            # Reset pointer to scan for PHP or script tags in the first 16KB 
+            # (sometimes attackers put PHP code in MP3 ID3 tags)
+            f.seek(0)
+            chunk = f.read(16384).lower()
+            
+            suspicious_patterns = [
+                b'<?php',
+                b'<script',
+                b'system(',
+                b'exec(',
+                b'eval(',
+                b'shell_exec('
+            ]
+            
+            for pattern in suspicious_patterns:
+                if pattern in chunk:
+                    return False, "Le fichier contient des données suspectes et a été bloqué"
+                    
+    except Exception as e:
+        return False, f"Erreur lors de la validation du fichier: {str(e)}"
+        
+    return True, "Fichier valide"
+
+def recognize_music_from_file_sync(file_path, timecodes=None, progress_id=None, progress_dict=None):
+    """Sync wrapper for recognize_music_from_file"""
+    import asyncio
+    import sys
+    
+    if sys.platform == 'win32':
+        asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
+        
+    return asyncio.run(recognize_music_from_file(file_path, timecodes, progress_id, progress_dict))
+
+async def recognize_music_from_file(file_path, timecodes=None, progress_id=None, progress_dict=None):
+    """Recognize music from an uploaded local file using Shazam"""
+    from shazamio import Shazam
+    temp_uuid = str(uuid.uuid4())
+    result_to_return = {'found': False, 'message': 'Erreur inconnue'}
+    
+    try:
+        # Default timecodes
+        if not timecodes:
+            timecodes = [30, 60, 90]
+        
+        print(f"[Recognition] Initialisation Shazam sur fichier...")
+        shazam = Shazam()
+        
+        results = []
+        print(f"[Recognition] Analyse de {len(timecodes)} timecodes...")
+        
+        for i, timecode in enumerate(timecodes):
+            segment_path = None
+            try:
+                print(f"[Recognition] Traitement timecode {i+1}/{len(timecodes)}: {timecode}s")
+                segment_path = os.path.join(UPLOAD_FOLDER, f"{temp_uuid}_segment_{i}.mp3")
+                
+                print(f"[Recognition] Extraction segment...")
+                extract_audio_segment(file_path, segment_path, timecode, duration=10)
+                
+                print(f"[Recognition] Envoi à Shazam...")
+                result = await shazam.recognize(segment_path)
+                
+                if os.path.exists(segment_path):
+                    os.remove(segment_path)
+                
+                if result and 'track' in result:
+                    track_info = result['track']
+                    title = track_info.get('title', 'Inconnu')
+                    artist = track_info.get('subtitle', 'Inconnu')
+                    print(f"[Recognition] TROUVÉ: {title} - {artist}")
+                    
+                    results.append({
+                        'timecode': timecode,
+                        'formatted_timecode': format_timecode(timecode),
+                        'title': title,
+                        'artist': artist,
+                        'shazam_url': track_info.get('url', None),
+                        'cover_art': track_info.get('images', {}).get('coverart', None),
+                        'raw_result': result
+                    })
+                    
+            except Exception as e:
+                print(f"[Recognition] ERREUR au timecode {timecode}s: {e}")
+                if segment_path and os.path.exists(segment_path):
+                    try: os.remove(segment_path)
+                    except: pass
+                continue
+        
+        if not results:
+            print("[Recognition] Aucune musique trouvée.")
+            result_to_return = {'found': False, 'message': 'Aucune musique reconnue dans ce fichier'}
+        else:
+            print(f"[Recognition] {len(results)} résultats trouvés.")
+            best_result = results[0]
+            
+            all_tracks_links = []
+            for res in results:
+                links = await search_track_links(res['title'], res['artist'])
+                res['links'] = links
+                all_tracks_links.append(res)
+            
+            result_to_return = {
+                'found': True,
+                'results': all_tracks_links,
+                'title': best_result['title'],
+                'artist': best_result['artist'],
+                'timecode': best_result['timecode'],
+                'formatted_timecode': best_result['formatted_timecode'],
+                'cover_art': best_result['cover_art'],
+                'shazam_url': best_result['shazam_url'],
+                'links': all_tracks_links[0]['links']
+            }
+        
+    except Exception as e:
+        print(f"[Recognition] ERREUR GLOBALE: {e}")
+        for f in os.listdir(UPLOAD_FOLDER):
+            if f.startswith(temp_uuid) and '_segment_' in f:
+                try: os.remove(os.path.join(UPLOAD_FOLDER, f))
+                except: pass
+        raise e
+    finally:
+        # Delete original uploaded file after processing
+        if os.path.exists(file_path):
+            try:
+                os.remove(file_path)
+                print(f"[Recognition] Upload supprimé: {file_path}")
+            except Exception as e:
+                print(f"[Recognition] Erreur suppression upload: {e}")
+                
+    return result_to_return
+
 
 async def recognize_music_from_url(url, timecodes=None, progress_id=None, progress_dict=None, keep_file=False):
     """Recognize music from URL using Shazam"""
@@ -1353,6 +1551,30 @@ async def recognize_music_from_url(url, timecodes=None, progress_id=None, progre
                 continue
         
         # Prepare result
+        if not results:
+            print("[Recognition] Aucune musique trouvée via Shazam. Tentative de récupération des métadonnées de la source...")
+            try:
+                ydl_opts = {'quiet': True, 'extract_flat': True}
+                with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                    info = ydl.extract_info(url, download=False)
+                    if info and info.get('title'):
+                        title = info.get('title')
+                        artist = info.get('artist') or info.get('uploader') or info.get('channel') or 'Inconnu'
+                        
+                        fallback_result = {
+                            'timecode': 0,
+                            'formatted_timecode': '00.00',
+                            'title': title,
+                            'artist': artist,
+                            'shazam_url': None,
+                            'cover_art': info.get('thumbnail'),
+                            'raw_result': {'fallback': True}
+                        }
+                        results.append(fallback_result)
+                        print(f"[Recognition] Fallback réussi: {title} - {artist}")
+            except Exception as e:
+                print(f"[Recognition] Erreur lors du fallback: {e}")
+
         if not results:
             print("[Recognition] Aucune musique trouvée.")
             result_to_return = {'found': False, 'message': 'Aucune musique reconnue'}
