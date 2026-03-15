@@ -37,3 +37,14 @@ desktop.ini
 # Output directories (optional, depending on project structure)
 # [HQ]/
 # output/
+
+# Temp processing files
+downloads/
+downloads_bot/
+.cache/
+*.json
+*.txt
+!requirements.txt
+!README.md
+!ALTERNATIVE_SITES.md
+test_*.py

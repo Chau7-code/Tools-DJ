@@ -22,11 +22,17 @@ import sys
 import re
 import asyncio
 import argparse
-import unicodedata
 import requests
 from datetime import datetime
 from dotenv import load_dotenv
+
+script_dir = os.path.dirname(os.path.abspath(__file__))
+if script_dir not in sys.path:
+    sys.path.insert(0, script_dir)
+
 from checkpoint import CheckpointManager
+from utils import C, normalize, sanitize_filename, limit_artists, AUDIO_EXT
+from shazam_cache import cache_get as shazam_cache_get, cache_save as shazam_cache_save
 
 try:
     from shazamio import Shazam
@@ -35,7 +41,6 @@ except ImportError:
     sys.exit(1)
 
 try:
-    from mutagen.easyid3 import EasyID3
     from mutagen.id3 import ID3, TDRC, TYER, TORY, TCON, ID3NoHeaderError
     MUTAGEN_OK = True
 except ImportError:
@@ -51,7 +56,6 @@ except ImportError:
     SPOTIPY_OK = False
 
 # ─── Paths & env ──────────────────────────────────────────────────
-script_dir = os.path.dirname(os.path.abspath(__file__))
 load_dotenv(os.path.join(os.path.dirname(script_dir), '.env'))
 
 sp = None
@@ -65,49 +69,8 @@ if SPOTIPY_OK:
         except Exception:
             pass
 
-# ─── Couleurs ANSI ────────────────────────────────────────────────
-class C:
-    G = '\033[92m'; Y = '\033[93m'; R = '\033[91m'
-    B = '\033[94m'; M = '\033[95m'; X = '\033[0m'
-
 
 # ─── Helpers ──────────────────────────────────────────────────────
-AUDIO_EXT = ('.mp3', '.wav', '.flac', '.m4a', '.aac', '.ogg')
-
-
-def sanitize_filename(name):
-    """Supprime les caracteres interdits dans un nom de fichier."""
-    # Remplacer les caracteres speciaux Windows
-    name = re.sub(r'[<>:"/\\|?*]', '', name)
-    # Supprimer les espaces en trop
-    name = re.sub(r'\s+', ' ', name).strip()
-    # Limiter la longueur
-    if len(name) > 200:
-        name = name[:200]
-    return name
-
-
-def limit_artists(artist_str, max_artists=2):
-    """Limite le nombre d'artistes a max_artists (defaut: 2)."""
-    if not artist_str:
-        return artist_str
-    # Separer par les delimiteurs courants : ", ", " & ", " feat. ", " ft. ", " x "
-    parts = re.split(r'\s*,\s*|\s+&\s+|\s+feat\.?\s+|\s+ft\.?\s+|\s+x\s+', artist_str, flags=re.IGNORECASE)
-    parts = [p.strip() for p in parts if p.strip()]
-    if len(parts) <= max_artists:
-        return artist_str
-    return ', '.join(parts[:max_artists])
-
-
-def normalize_for_comparison(text):
-    """Normalise un texte pour comparaison (minuscules, sans accents)."""
-    if not text:
-        return ''
-    text = unicodedata.normalize('NFKD', text).encode('ascii', 'ignore').decode('ascii')
-    text = text.lower()
-    text = re.sub(r'[^a-z0-9 ]', '', text)
-    text = re.sub(r'\s+', ' ', text).strip()
-    return text
 
 
 def extract_filename_query(filepath):
@@ -203,14 +166,21 @@ def search_spotify(query):
 async def identify_track(shazam, filepath):
     """
     Pipeline complet d'identification :
+      0. Cache Shazam (résultat précédent)
       1. Shazam (empreinte audio)
       2. iTunes (recherche par nom de fichier)
       3. Spotify (recherche par nom de fichier)
     Retourne {'artist': ..., 'title': ..., 'genre': ...} ou None.
     """
+    # Etape 0 : Cache Shazam
+    cached = shazam_cache_get(filepath)
+    if cached and cached.get('artist') and cached.get('title'):
+        return cached, f"Cache ({cached.get('source', 'Shazam')})"
+
     # Etape 1 : Shazam
     result = await identify_with_shazam(shazam, filepath)
     if result and result.get('artist') and result.get('title'):
+        shazam_cache_save(filepath, result, source='Shazam')
         return result, 'Shazam'
 
     # Etape 2 : iTunes fallback
@@ -218,12 +188,14 @@ async def identify_track(shazam, filepath):
     if query:
         result = search_itunes(query)
         if result:
+            shazam_cache_save(filepath, result, source='iTunes')
             return result, 'iTunes'
 
     # Etape 3 : Spotify fallback
     if query:
         result = search_spotify(query)
         if result:
+            shazam_cache_save(filepath, result, source='Spotify')
             return result, 'Spotify'
 
     return None, None
@@ -285,7 +257,7 @@ def handle_duplicates(rename_map):
     groups = defaultdict(list)
     for old_path, new_base in rename_map.items():
         ext = os.path.splitext(old_path)[1]
-        key = normalize_for_comparison(new_base)
+        key = normalize(new_base)
         groups[key].append((old_path, new_base, ext))
 
     final_map = {}
@@ -386,19 +358,20 @@ async def run(directory, dry_run=False, log_file=None):
                 if year: parts.append(f"Année: {year}")
                 print(f"    └─ {' | '.join(parts)}")
 
-            # Si Shazam n'a pas trouvé l'année, chercher via iTunes
-            if not year:
-                query = extract_filename_query(filepath)
-                if query:
+            # Si Shazam n'a pas trouvé l'année ou le genre, enrichir via iTunes (un seul appel)
+            if not year or not genre:
+                itunes_query = f"{artist} {title}" if artist and title else extract_filename_query(filepath)
+                if itunes_query:
                     try:
-                        params = {"term": query, "entity": "song", "limit": 1, "country": "FR"}
+                        params = {"term": itunes_query, "entity": "song", "limit": 1, "country": "FR"}
                         resp = requests.get("https://itunes.apple.com/search", params=params, timeout=10)
                         data = resp.json()
                         if data.get("resultCount", 0) > 0:
                             t = data["results"][0]
-                            release = t.get("releaseDate", "")
-                            if release:
-                                year = release[:4]
+                            if not year:
+                                release = t.get("releaseDate", "")
+                                if release:
+                                    year = release[:4]
                             if not genre:
                                 genre = t.get("primaryGenreName", "")
                     except Exception:
@@ -418,7 +391,7 @@ async def run(directory, dry_run=False, log_file=None):
 
             # Verifier si le fichier porte deja le bon nom
             current_base = os.path.splitext(fname)[0]
-            if normalize_for_comparison(current_base) == normalize_for_comparison(new_base):
+            if normalize(current_base) == normalize(new_base):
                 print(f"    └─ {C.G}✅ Nom déjà correct.{C.X}")
                 # Écrire les tags même si le nom est déjà bon
                 if (year or genre) and filepath.lower().endswith('.mp3'):

@@ -762,7 +762,6 @@ def download_spotify(url, output_path, custom_filename=None, progress_id=None, p
     
     spotdl_installed = False
     try:
-        import spotdl
         spotdl_installed = True
     except ImportError:
         spotdl_installed = False
@@ -1105,6 +1104,26 @@ def trim_audio(input_path, output_path, start_time=None, end_time=None):
         raise Exception(f"Erreur lors de la coupe audio: {error_msg}")
 
 
+def get_audio_duration(file_path):
+    """Get the duration of an audio file using ffprobe"""
+    ffmpeg_location = ensure_ffmpeg()
+    if not ffmpeg_location:
+        return 0
+    ffprobe_exe = os.path.join(ffmpeg_location, 'ffprobe.exe' if os.name == 'nt' else 'ffprobe')
+    cmd = [
+        ffprobe_exe, 
+        "-v", "error", 
+        "-show_entries", "format=duration", 
+        "-of", "default=noprint_wrappers=1:nokey=1", 
+        file_path
+    ]
+    try:
+        result = subprocess.run(cmd, check=True, capture_output=True, text=True)
+        return float(result.stdout.strip())
+    except Exception as e:
+        print(f"[FFprobe] Erreur lecture duree: {e}")
+        return 0
+
 def extract_audio_segment(input_path, output_path, start_time, duration=10):
     """Extract audio segment using FFmpeg"""
     ffmpeg_location = ensure_ffmpeg()
@@ -1388,9 +1407,6 @@ async def recognize_music_from_file(file_path, timecodes=None, progress_id=None,
                 print(f"[Recognition] Envoi à Shazam...")
                 result = await shazam.recognize(segment_path)
                 
-                if os.path.exists(segment_path):
-                    os.remove(segment_path)
-                
                 if result and 'track' in result:
                     track_info = result['track']
                     title = track_info.get('title', 'Inconnu')
@@ -1404,8 +1420,12 @@ async def recognize_music_from_file(file_path, timecodes=None, progress_id=None,
                         'artist': artist,
                         'shazam_url': track_info.get('url', None),
                         'cover_art': track_info.get('images', {}).get('coverart', None),
-                        'raw_result': result
+                        'raw_result': result,
+                        'segment_path': segment_path
                     })
+                else:
+                    if os.path.exists(segment_path):
+                        os.remove(segment_path)
                     
             except Exception as e:
                 print(f"[Recognition] ERREUR au timecode {timecode}s: {e}")
@@ -1496,7 +1516,17 @@ async def recognize_music_from_url(url, timecodes=None, progress_id=None, progre
         
         # Default timecodes
         if not timecodes:
-            timecodes = [30, 60, 90]
+            duration = get_audio_duration(final_path)
+            if duration > 0:
+                if duration < 15:
+                    timecodes = [0]
+                elif duration < 45:
+                    timecodes = [0, int(duration / 2)]
+                else:
+                    # Often instagram reels have the main music right at the beginning
+                    timecodes = [0, 30, 60]
+            else:
+                timecodes = [30, 60, 90]
         
         # Analyze each timecode
         print(f"[Recognition] Initialisation Shazam...")
@@ -1519,10 +1549,6 @@ async def recognize_music_from_url(url, timecodes=None, progress_id=None, progre
                 print(f"[Recognition] Envoi à Shazam...")
                 result = await shazam.recognize(segment_path)
                 
-                # Cleanup segment
-                if os.path.exists(segment_path):
-                    os.remove(segment_path)
-                
                 if result and 'track' in result:
                     track_info = result['track']
                     title = track_info.get('title', 'Inconnu')
@@ -1536,10 +1562,14 @@ async def recognize_music_from_url(url, timecodes=None, progress_id=None, progre
                         'artist': artist,
                         'shazam_url': track_info.get('url', None),
                         'cover_art': track_info.get('images', {}).get('coverart', None),
-                        'raw_result': result
+                        'raw_result': result,
+                        'segment_path': segment_path
                     })
                 else:
                     print(f"[Recognition] Rien trouvé au timecode {timecode}s")
+                    # Cleanup segment
+                    if os.path.exists(segment_path):
+                        os.remove(segment_path)
                     
             except Exception as e:
                 print(f"[Recognition] ERREUR au timecode {timecode}s: {e}")

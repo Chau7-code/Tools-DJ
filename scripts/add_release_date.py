@@ -15,8 +15,6 @@ except ImportError:
 
 try:
     from mutagen.id3 import ID3, TDRC, TYER, TORY, TCON, ID3NoHeaderError
-    from mutagen.easyid3 import EasyID3
-    import mutagen
 except ImportError:
     print("mutagen required: pip install mutagen")
     sys.exit(1)

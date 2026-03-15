@@ -3,41 +3,31 @@ pipeline_musique.py
 --------------------
 Script global qui orchestre toute la chaine de traitement musical :
 
-  ÉTAPE 1 — Analyse qualité audio
+  ÉTAPE 1 — Analyse qualité audio + Cleanup
+    → Supprime les prévisualisations < 60s
     → Supprime les fichiers de mauvaise qualité (faux 320, rips YouTube)
-    → Re-télécharge les fichiers supprimés en HQ (SoundCloud → YouTube)
-    → Les fichiers HQ arrivent dans un dossier [HQ] séparé
+    → Re-télécharge les fichiers supprimés en HQ directement dans le dossier
+    → Nettoyage des préfixes upgrade_ (sous-étape)
 
-  ÉTAPE 2 — Fusion des fichiers upgrade
-    → Déplace les fichiers du dossier [HQ] vers le dossier principal
-    → Quand un fichier upgrade_ existe, supprime l'ancien et garde l'upgrade
-    → Renomme les upgrade_ en retirant le préfixe
-
-  ÉTAPE 3 — Renommage intelligent & Tagging
+  ÉTAPE 2 — Identification + Renommage + Tags + Dedup
     → Identifie chaque fichier via Shazam (+ iTunes/Spotify en fallback)
+    → Utilise le cache Shazam pour éviter les doubles identifications
     → Renomme en format propre : Artiste - Titre.ext
     → Écrit les tags ID3 : genre + date de sortie
-    → Les doublons reçoivent un suffixe song-1, song-2
-
-  ÉTAPE 4 — Nettoyage des doublons
-    → Détecte les fichiers avec le même artiste/titre
-    → Garde le meilleur (plus gros, sans suffixe song-N)
-    → Supprime les doublons et retire les suffixes song-N
+    → Supprime les doublons + nettoie les suffixes song-N
 
 Usage :
     python scripts/pipeline_musique.py "C:/chemin/vers/musique"
     python scripts/pipeline_musique.py "C:/chemin/vers/musique" --dry-run
     python scripts/pipeline_musique.py "C:/chemin/vers/musique" --skip-quality
-    python scripts/pipeline_musique.py "C:/chemin/vers/musique" --skip-tags
+    python scripts/pipeline_musique.py "C:/chemin/vers/musique" --skip-rename
 """
 
 import os
 import sys
 import re
-import shutil
 import argparse
 import asyncio
-import unicodedata
 from datetime import datetime
 
 # ─── Setup des chemins ────────────────────────────────────────────
@@ -48,51 +38,16 @@ if parent_dir not in sys.path:
 if script_dir not in sys.path:
     sys.path.insert(0, script_dir)
 
-
-# ─── Couleurs ANSI ─────────────────────────────────────────────────
-class C:
-    GREEN   = '\033[92m'
-    YELLOW  = '\033[93m'
-    RED     = '\033[91m'
-    BLUE    = '\033[94m'
-    MAGENTA = '\033[95m'
-    CYAN    = '\033[96m'
-    BOLD    = '\033[1m'
-    RESET   = '\033[0m'
-
-AUDIO_EXT = ('.mp3', '.wav', '.flac', '.m4a', '.aac', '.ogg')
-
-
-def banner(step_num, title):
-    """Affiche une bannière d'étape bien visible."""
-    print(f"\n{'='*60}")
-    print(f"  {C.BOLD}{C.CYAN}ÉTAPE {step_num}{C.RESET} — {C.BOLD}{title}{C.RESET}")
-    print(f"{'='*60}\n")
-
-
-def normalize(text):
-    """Normalise un texte pour comparaison."""
-    if not text:
-        return ''
-    text = unicodedata.normalize('NFKD', text).encode('ascii', 'ignore').decode('ascii')
-    text = text.lower()
-    text = re.sub(r'[^a-z0-9 ]', '', text)
-    text = re.sub(r'\s+', ' ', text).strip()
-    return text
-
-
-def count_audio_files(directory):
-    """Compte les fichiers audio dans un dossier."""
-    return sum(1 for f in os.listdir(directory) if f.lower().endswith(AUDIO_EXT))
+from utils import C, AUDIO_EXT, count_audio_files, banner
 
 
 # =====================================================================
-#  ÉTAPE 1 : Analyse qualité + re-téléchargement HQ
+#  ÉTAPE 1 : Analyse qualité + Preview cleanup + Re-téléchargement HQ
 # =====================================================================
 
 def step1_quality_check(directory, dry_run=False):
     """Lance l'analyse qualité audio et le re-téléchargement."""
-    banner(1, "Analyse qualité audio + re-téléchargement HQ")
+    banner(1, "Analyse qualité audio + Cleanup + Re-téléchargement HQ")
 
     if dry_run:
         print(f"{C.YELLOW}⚠️  Mode simulation : l'analyse sera affichée mais rien ne sera supprimé.{C.RESET}")
@@ -103,7 +58,6 @@ def step1_quality_check(directory, dry_run=False):
         if not dry_run:
             clean_audio_files(directory)
         else:
-            # En dry-run on affiche juste les stats
             files = [f for f in os.listdir(directory) if f.lower().endswith(AUDIO_EXT)]
             print(f"  📊 {len(files)} fichiers audio trouvés dans le dossier")
             print(f"  {C.YELLOW}Simulation : analyse qualité ignorée en mode --dry-run{C.RESET}")
@@ -113,90 +67,19 @@ def step1_quality_check(directory, dry_run=False):
     print(f"\n{C.GREEN}✅ Étape 1 terminée.{C.RESET}")
 
 
-# =====================================================================
-#  ÉTAPE 2 : Fusion des fichiers upgrade (dossier [HQ] → principal)
-# =====================================================================
-
-def step2_merge_upgrades(directory, dry_run=False):
+def step1b_cleanup_upgrades(directory, dry_run=False):
     """
-    Fusionne les fichiers du dossier [HQ] dans le dossier principal.
-    - Cherche le dossier [HQ] correspondant
-    - Déplace les fichiers vers le dossier principal
-    - Si un fichier avec le même nom (sans upgrade_) existe, supprime l'ancien
-    - Retire le préfixe upgrade_ des fichiers déplacés
+    Sous-étape : nettoie les préfixes upgrade_ dans le dossier principal.
+    Les fichiers HQ sont maintenant téléchargés directement dans le dossier
+    avec un préfixe upgrade_. On doit :
+      - Si un fichier sans préfixe existe, comparer les tailles
+      - Garder le meilleur, supprimer l'autre
+      - Renommer en retirant le préfixe upgrade_
     """
-    banner(2, "Fusion des fichiers upgrade")
-
-    # Chercher le dossier [HQ]
-    parent = os.path.dirname(directory)
-    folder_name = os.path.basename(directory)
-    hq_dir = os.path.join(parent, f"{folder_name} [HQ]")
-
-    # Chercher aussi dans le dossier lui-même (sous-dossier [HQ])
-    hq_dir_inside = os.path.join(directory, "[HQ]")
-
-    actual_hq_dir = None
-    if os.path.isdir(hq_dir):
-        actual_hq_dir = hq_dir
-    elif os.path.isdir(hq_dir_inside):
-        actual_hq_dir = hq_dir_inside
-
-    merged = 0
-    replaced = 0
-    cleaned_prefix = 0
-
-    # ─── Partie A : Fusionner depuis le dossier [HQ] ─────────────
-    if actual_hq_dir:
-        hq_files = [f for f in os.listdir(actual_hq_dir) if f.lower().endswith(AUDIO_EXT)]
-        print(f"📂 Dossier [HQ] trouvé : {actual_hq_dir}")
-        print(f"   {len(hq_files)} fichier(s) à fusionner\n")
-
-        for fname in sorted(hq_files):
-            src = os.path.join(actual_hq_dir, fname)
-            dst = os.path.join(directory, fname)
-
-            # Chercher si un fichier similaire existe déjà (sans upgrade_)
-            base_clean = re.sub(r'^upgrade_', '', fname, flags=re.IGNORECASE)
-            existing = os.path.join(directory, base_clean)
-
-            if os.path.exists(existing) and normalize(base_clean) != normalize(fname):
-                action = "SIMULATION" if dry_run else "REMPLACÉ"
-                print(f"  {C.RED}[🔄 {action}]{C.RESET} {base_clean}")
-                print(f"    └─ par {C.GREEN}{fname}{C.RESET} (version HQ)")
-                if not dry_run:
-                    try:
-                        os.remove(existing)
-                        replaced += 1
-                    except Exception as e:
-                        print(f"    └─ {C.RED}Erreur suppression ancien : {e}{C.RESET}")
-
-            action = "SIMULATION" if dry_run else "DÉPLACÉ"
-            print(f"  {C.GREEN}[📦 {action}]{C.RESET} {fname} → dossier principal")
-
-            if not dry_run:
-                try:
-                    shutil.move(src, dst)
-                    merged += 1
-                except Exception as e:
-                    print(f"    └─ {C.RED}Erreur déplacement : {e}{C.RESET}")
-            else:
-                merged += 1
-
-        # Supprimer le dossier [HQ] s'il est vide
-        if not dry_run and actual_hq_dir:
-            remaining = os.listdir(actual_hq_dir)
-            if not remaining:
-                try:
-                    os.rmdir(actual_hq_dir)
-                    print(f"\n  {C.GREEN}🗑️  Dossier [HQ] vide supprimé.{C.RESET}")
-                except Exception:
-                    pass
-    else:
-        print(f"  {C.YELLOW}Aucun dossier [HQ] trouvé, étape ignorée.{C.RESET}")
-        print(f"  (Recherché : {hq_dir})")
-
-    # ─── Partie B : Nettoyer les fichiers upgrade_ dans le dossier ─
     print(f"\n{C.BLUE}--- Nettoyage des préfixes upgrade_ ---{C.RESET}\n")
+
+    cleaned = 0
+    replaced = 0
 
     for fname in sorted(os.listdir(directory)):
         if not fname.lower().endswith(AUDIO_EXT):
@@ -223,9 +106,12 @@ def step2_merge_upgrades(directory, dry_run=False):
                 if not dry_run:
                     try:
                         os.remove(dst)
+                        replaced += 1
                     except Exception as e:
                         print(f"    └─ {C.RED}Erreur : {e}{C.RESET}")
                         continue
+                else:
+                    replaced += 1
             else:
                 # L'ancien est plus gros → garder l'ancien, supprimer l'upgrade
                 action = "SIMULATION" if dry_run else "SUPPRIMÉ"
@@ -235,36 +121,35 @@ def step2_merge_upgrades(directory, dry_run=False):
                         os.remove(src)
                     except Exception as e:
                         print(f"    └─ {C.RED}Erreur : {e}{C.RESET}")
-                cleaned_prefix += 1
                 continue
 
         # Renommer sans le préfixe upgrade_
         action = "SIMULATION" if dry_run else "RENOMMÉ"
-        print(f"  {C.GREEN}[✏️  {action}]{C.RESET} upgrade_{clean_name} → {clean_name}")
+        print(f"  {C.GREEN}[✏️  {action}]{C.RESET} {fname} → {clean_name}")
         if not dry_run:
             try:
                 os.rename(src, dst)
-                cleaned_prefix += 1
+                cleaned += 1
             except Exception as e:
                 print(f"    └─ {C.RED}Erreur : {e}{C.RESET}")
         else:
-            cleaned_prefix += 1
+            cleaned += 1
 
-    # Résumé
-    mode = " (simulation)" if dry_run else ""
-    print(f"\n  📊 Fichiers fusionnés depuis [HQ]{mode} : {merged}")
-    print(f"  🔄 Anciens fichiers remplacés{mode}     : {replaced}")
-    print(f"  ✏️  Préfixes upgrade_ nettoyés{mode}     : {cleaned_prefix}")
-    print(f"\n{C.GREEN}✅ Étape 2 terminée.{C.RESET}")
+    if cleaned == 0 and replaced == 0:
+        print(f"  {C.GREEN}✨ Aucun fichier upgrade_ à traiter.{C.RESET}")
+    else:
+        mode = " (simulation)" if dry_run else ""
+        print(f"\n  ✏️  Préfixes nettoyés{mode} : {cleaned}")
+        print(f"  🔄 Anciens remplacés{mode}  : {replaced}")
 
 
 # =====================================================================
-#  ÉTAPE 3 : Renommage intelligent (Shazam + iTunes + Spotify)
+#  ÉTAPE 2 : Identification + Renommage + Tags + Dedup
 # =====================================================================
 
-def step3_rename(directory, dry_run=False):
-    """Lance le renommage via Shazam/iTunes/Spotify."""
-    banner(3, "Renommage intelligent (Shazam → iTunes → Spotify)")
+def step2_rename(directory, dry_run=False):
+    """Lance le renommage via Shazam/iTunes/Spotify (avec cache)."""
+    banner(2, "Identification + Renommage (Shazam → iTunes → Spotify)")
 
     try:
         from rename_tracks import run as rename_run
@@ -276,40 +161,20 @@ def step3_rename(directory, dry_run=False):
     except Exception as e:
         print(f"{C.RED}Erreur pendant le renommage : {e}{C.RESET}")
 
-    print(f"\n{C.GREEN}✅ Étape 3 terminée.{C.RESET}")
+    print(f"\n{C.GREEN}✅ Renommage terminé.{C.RESET}")
 
 
-# =====================================================================
-#  ÉTAPE 4 : Nettoyage des doublons (song-N, mêmes titres, etc.)
-# =====================================================================
+def step2b_cleanup_dupes(directory, dry_run=False):
+    """Lance le nettoyage unifié des doublons."""
+    print(f"\n{C.BLUE}--- Nettoyage des doublons ---{C.RESET}\n")
 
-def step4_cleanup_dupes(directory, dry_run=False):
-    """
-    Lance le nettoyage des doublons en deux passes :
-      1. cleanup_duplicates.py : supprime prévisualisations + doublons généraux
-      2. cleanup_rename_dupes.py : nettoie les doublons spécifiques au renommage
-    """
-    banner(4, "Nettoyage des doublons")
-
-    # Passe 1 : Doublons généraux + prévisualisations
-    print(f"{C.BLUE}--- Passe 1 : Prévisualisations + doublons généraux ---{C.RESET}\n")
     try:
-        from cleanup_duplicates import run as cleanup_run
+        from cleanup_all_dupes import run as cleanup_run
         cleanup_run(directory, dry_run=dry_run)
     except Exception as e:
-        print(f"{C.RED}Erreur pendant le nettoyage général : {e}{C.RESET}")
+        print(f"{C.RED}Erreur pendant le nettoyage des doublons : {e}{C.RESET}")
 
-    print()
-
-    # Passe 2 : Doublons de renommage (song-N)
-    print(f"{C.BLUE}--- Passe 2 : Doublons de renommage (song-N) ---{C.RESET}\n")
-    try:
-        from cleanup_rename_dupes import run as rename_dupes_run
-        rename_dupes_run(directory, dry_run=dry_run)
-    except Exception as e:
-        print(f"{C.RED}Erreur pendant le nettoyage des doublons de renommage : {e}{C.RESET}")
-
-    print(f"\n{C.GREEN}✅ Étape 4 terminée.{C.RESET}")
+    print(f"\n{C.GREEN}✅ Étape 2 terminée.{C.RESET}")
 
 
 # =====================================================================
@@ -317,9 +182,9 @@ def step4_cleanup_dupes(directory, dry_run=False):
 # =====================================================================
 
 def run_pipeline(directory, dry_run=False, skip_quality=False, skip_rename=False,
-                 skip_merge=False, skip_dupes=False):
+                 skip_dupes=False):
     """
-    Orchestre toute la chaine de traitement.
+    Orchestre toute la chaine de traitement en 2 étapes.
     """
     start_time = datetime.now()
 
@@ -332,13 +197,12 @@ def run_pipeline(directory, dry_run=False, skip_quality=False, skip_rename=False
 
     steps = []
     if not skip_quality:
-        steps.append("1. Analyse qualité + re-téléchargement HQ")
-    if not skip_merge:
-        steps.append("2. Fusion des fichiers upgrade")
+        steps.append("1. Analyse qualité + Cleanup + Re-téléchargement HQ")
+        steps.append("   └─ Nettoyage des préfixes upgrade_")
     if not skip_rename:
-        steps.append("3. Renommage intelligent & Tagging (Shazam)")
+        steps.append("2. Identification + Renommage + Tags (Shazam)")
     if not skip_dupes:
-        steps.append("4. Nettoyage des doublons")
+        steps.append("   └─ Nettoyage des doublons + suffixes song-N")
 
     print(f"\n  📋 Étapes prévues :")
     for s in steps:
@@ -348,15 +212,13 @@ def run_pipeline(directory, dry_run=False, skip_quality=False, skip_rename=False
     # ─── Exécution des étapes ──────────────────────────────────
     if not skip_quality:
         step1_quality_check(directory, dry_run)
-
-    if not skip_merge:
-        step2_merge_upgrades(directory, dry_run)
+        step1b_cleanup_upgrades(directory, dry_run)
 
     if not skip_rename:
-        step3_rename(directory, dry_run)
+        step2_rename(directory, dry_run)
 
     if not skip_dupes:
-        step4_cleanup_dupes(directory, dry_run)
+        step2b_cleanup_dupes(directory, dry_run)
 
     # ─── Résumé final ──────────────────────────────────────────
     elapsed = datetime.now() - start_time
@@ -382,14 +244,14 @@ if __name__ == '__main__':
         os.system('color')
 
     parser = argparse.ArgumentParser(
-        description="Pipeline global : qualité → upgrade → renommage → tagging → doublons",
+        description="Pipeline global : qualité → renommage → tagging → doublons",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Exemples :
   python scripts/pipeline_musique.py "C:/Music/DJ/ma_collection"
   python scripts/pipeline_musique.py "C:/Music/DJ/ma_collection" --dry-run
   python scripts/pipeline_musique.py "C:/Music/DJ/ma_collection" --skip-quality
-  python scripts/pipeline_musique.py "C:/Music/DJ/ma_collection" --skip-quality --skip-rename
+  python scripts/pipeline_musique.py "C:/Music/DJ/ma_collection" --skip-rename
         """
     )
     parser.add_argument('dossier', help="Dossier contenant les fichiers audio")
@@ -397,12 +259,10 @@ Exemples :
                         help="Simulation : affiche tout sans modifier les fichiers")
     parser.add_argument('--skip-quality', action='store_true',
                         help="Ignorer l'étape 1 (analyse qualité + re-téléchargement)")
-    parser.add_argument('--skip-merge', action='store_true',
-                        help="Ignorer l'étape 2 (fusion des fichiers upgrade)")
     parser.add_argument('--skip-rename', action='store_true',
-                        help="Ignorer l'étape 3 (renommage Shazam & Tagging)")
+                        help="Ignorer l'étape 2 (renommage Shazam & Tagging)")
     parser.add_argument('--skip-dupes', action='store_true',
-                        help="Ignorer l'étape 4 (nettoyage doublons)")
+                        help="Ignorer le nettoyage des doublons")
     args = parser.parse_args()
 
     target = os.path.abspath(args.dossier)
@@ -415,6 +275,5 @@ Exemples :
         dry_run=args.dry_run,
         skip_quality=args.skip_quality,
         skip_rename=args.skip_rename,
-        skip_merge=args.skip_merge,
         skip_dupes=args.skip_dupes
     )

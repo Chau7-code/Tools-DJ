@@ -13,43 +13,20 @@ script_dir = os.path.dirname(os.path.abspath(__file__))
 parent_dir = os.path.dirname(script_dir)
 if parent_dir not in sys.path:
     sys.path.insert(0, parent_dir)
+if script_dir not in sys.path:
+    sys.path.insert(0, script_dir)
 
-from downloader import download_youtube, download_soundcloud, ensure_ffmpeg, sanitize_filename
+from downloader import download_youtube, download_soundcloud, sanitize_filename
+from utils import C as Colors, FFPROBE_PATH as DEFAULT_FFPROBE_PATH, FFMPEG_PATH as DEFAULT_FFMPEG_PATH, get_duration_ffprobe
+from shazam_cache import cache_save as shazam_cache_save
 
 # Mutagen pour ID3
 try:
     from mutagen.easyid3 import EasyID3
-    from mutagen.id3 import ID3, TIT2, TPE1, APIC
     MUTAGEN_AVAILABLE = True
 except ImportError:
     MUTAGEN_AVAILABLE = False
     print("Mutagen non installé, les tag ID3 auto ne seront pas appliqués. Installez-le avec 'pip install mutagen'")
-
-# Couleurs ANSI
-class Colors:
-    GREEN = '\033[92m'
-    YELLOW = '\033[93m'
-    RED = '\033[91m'
-    BLUE = '\033[94m'
-    RESET = '\033[0m'
-
-script_dir = os.path.dirname(os.path.abspath(__file__))
-DEFAULT_FFPROBE_PATH = 'ffprobe'
-DEFAULT_FFMPEG_PATH = 'ffmpeg'
-
-if os.name == 'nt':
-    DEFAULT_FFPROBE_PATH = 'ffprobe.exe'
-    DEFAULT_FFMPEG_PATH = 'ffmpeg.exe'
-    
-local_ffprobe = os.path.join(parent_dir, 'ffmpeg_local', 'ffprobe.exe')
-if os.path.exists(local_ffprobe):
-    DEFAULT_FFPROBE_PATH = local_ffprobe
-
-local_ffmpeg = os.path.join(parent_dir, 'ffmpeg_local', 'ffmpeg.exe')
-if os.path.exists(local_ffmpeg):
-    DEFAULT_FFMPEG_PATH = local_ffmpeg
-    ffmpeg_dir = os.path.dirname(local_ffmpeg)
-    os.environ["PATH"] += os.pathsep + ffmpeg_dir
 
 # Fix pydub warning about ffmpeg not found by explicitly pointing to our ffmpeg
 try:
@@ -57,6 +34,9 @@ try:
     pydub.AudioSegment.converter = DEFAULT_FFMPEG_PATH
 except ImportError:
     pass
+
+# Durée minimale en secondes (en dessous = prévisualisation)
+MIN_DURATION_SECONDS = 60
 
 async def shazam_identify(file_path):
     try:
@@ -230,7 +210,22 @@ def clean_audio_files(directory, min_bitrate_kbps=320, generate_spectrogram=Fals
         file = os.path.basename(file_path)
         scanned_count += 1
         
-        # Test 0 : Heuristique visuelle du nom de fichier (Sources YouTube identifiables directes)
+        # Test 0a : Vérification durée < 60s (prévisualisation SoundCloud etc.)
+        duration = get_duration_ffprobe(file_path)
+        if duration is not None and duration < MIN_DURATION_SECONDS:
+            print(f"{Colors.RED}[❌ SUPPRIMÉ - PREVIEW {duration:.0f}s]{Colors.RESET} {file}")
+            try:
+                os.remove(file_path)
+                deleted_count += 1
+                name_without_ext = os.path.splitext(file)[0]
+                dir_name = os.path.dirname(os.path.abspath(file_path))
+                with open(log_file_path, "a", encoding="utf-8") as log_file:
+                    log_file.write(f"{dir_name}|{name_without_ext}\n")
+            except Exception as e:
+                print(f"    └─ {Colors.RED}Erreur suppression: {e}{Colors.RESET}")
+            continue
+        
+        # Test 0b : Heuristique visuelle du nom de fichier (Sources YouTube identifiables directes)
         file_lower = file.lower()
         if "music video" in file_lower or "4k" in file_lower or "2k" in file_lower or "official video" in file_lower:
             print(f"{Colors.RED}[❌ SUPPRIMÉ - NOM DE FICHIER 'YOUTUBE']{Colors.RESET} {file}")
@@ -309,6 +304,11 @@ def clean_audio_files(directory, min_bitrate_kbps=320, generate_spectrogram=Fals
             if shazam_title and shazam_artist:
                 print(f"    └─ {Colors.GREEN}🎵 Shazam: {shazam_artist} - {shazam_title}{Colors.RESET}")
                 shazam_str = f"|{shazam_artist}|{shazam_title}|{shazam_cover}"
+                # Sauvegarder dans le cache Shazam pour l'étape de renommage
+                shazam_cache_save(file_path, {
+                    'artist': shazam_artist, 'title': shazam_title,
+                    'genre': '', 'year': None
+                }, source='Shazam')
             
             try:
                 if generate_spectrogram:
@@ -349,14 +349,10 @@ def clean_audio_files(directory, min_bitrate_kbps=320, generate_spectrogram=Fals
         abs_downloads_dir = os.path.join(parent_dir, 'downloads')
         downloader_setup(abs_downloads_dir, abs_ffmpeg_dir)
         
-        # Créer le dossier HQ dans le répertoire PARENT du dossier analysé
-        # Ex: C:\Music\DJ\toutes les musique - Copie1 => C:\Music\DJ\toutes les musique - Copie1 [HQ]
+        # Télécharger directement dans le dossier principal avec préfixe upgrade_
         scanned_dir = directory if os.path.isdir(directory) else os.path.dirname(os.path.abspath(directory))
-        parent_dir = os.path.dirname(scanned_dir)
-        folder_name = os.path.basename(scanned_dir)
-        hq_output_dir = os.path.join(parent_dir, f"{folder_name} [HQ]")
-        os.makedirs(hq_output_dir, exist_ok=True)
-        print(f"{Colors.BLUE}\n\U0001f4c1 Dossier HQ créé : {hq_output_dir}{Colors.RESET}")
+        hq_output_dir = scanned_dir
+        print(f"{Colors.BLUE}\n\U0001f4c1 Téléchargement HQ dans : {hq_output_dir} (préfixe upgrade_){Colors.RESET}")
         
         # -- Authentification SoundCloud (optionnel, pour compte Go+) --
         # Exportez vos cookies SoundCloud au format Netscape depuis votre navigateur
@@ -424,10 +420,9 @@ def clean_audio_files(directory, min_bitrate_kbps=320, generate_spectrogram=Fals
                 clean_search_name = clean_search_name.strip('- ')
 
             progress_id = str(uuid.uuid4())
-            # Nom propre sans préfixe 'upgrade_' pour que le fichier soit facilement retrouvable
             clean_filename = sanitize_filename(clean_search_name)
-            # Sauvegarder dans le dossier HQ parent (et non dans l'original)
-            output_path = os.path.join(hq_output_dir, f"{clean_filename}.mp3")
+            # Sauvegarder dans le dossier principal avec préfixe upgrade_
+            output_path = os.path.join(hq_output_dir, f"upgrade_{clean_filename}.mp3")
             print(f"\n  📁 Dossier de destination : {hq_output_dir}")
             print(f"  💾 Nom du fichier : {clean_filename}.mp3")
             

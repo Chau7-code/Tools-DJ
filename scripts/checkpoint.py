@@ -44,8 +44,6 @@ if os.name == 'nt':
         return ''
 else:
     import select
-    import termios
-    import tty
 
     def _check_key():
         """Verifie si une touche est pressee (Linux/Mac)."""

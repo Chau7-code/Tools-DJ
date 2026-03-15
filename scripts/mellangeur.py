@@ -2,7 +2,6 @@ import spotipy
 from spotipy.oauth2 import SpotifyOAuth
 import random
 import os
-import sys
 
 def get_playlist_id(url):
     """Extracts playlist ID from a Spotify URL."""

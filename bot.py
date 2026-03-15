@@ -4,12 +4,10 @@ from discord.ext import commands
 from dotenv import load_dotenv
 import downloader
 import asyncio
-import shutil
 import uuid
 import random
 import string
 import requests
-import json
 import sys
 import subprocess
 
@@ -67,11 +65,63 @@ FIND_HISTORY = {}
 # Configuration du bot
 intents = discord.Intents.default()
 intents.message_content = True
-bot = commands.Bot(command_prefix='!', intents=intents)
+bot = commands.Bot(command_prefix='!', intents=intents, help_command=None)
 
 @bot.event
 async def on_ready():
     print(f'{bot.user} est connecté à Discord!')
+
+@bot.command(name='help')
+async def help_command(ctx):
+    """Affiche la liste des commandes disponibles."""
+    embed = discord.Embed(
+        title="🤖 Guide du Bot Musique",
+        description="Voici la liste de toutes les commandes disponibles :",
+        color=discord.Color.blue()
+    )
+    
+    embed.add_field(
+        name="📥 Convertir & Télécharger",
+        value=(
+            "`!convert <url>` - Convertit un lien en MP3 (Youtube, Spotify, Soundcloud, Instagram)\n"
+            "`!convert <url> -debut X -fin Y` - Télécharge un extrait spécifique\n"
+            "`!convert <url>` (avec une playlist) - Télécharge toute la playlist en ZIP"
+        ),
+        inline=False
+    )
+    
+    embed.add_field(
+        name="🔍 Rechercher (Shazam)",
+        value=(
+            "`!find <url>` - Identifie la musique dans une vidéo/audio\n"
+            "`!find <url> -t <timecodes>` - Analyse à un moment précis (ex: `1.30`)\n"
+            "`!install -u <uid> <numero>` - Installe une musique trouvée par `!find`"
+        ),
+        inline=False
+    )
+    
+    embed.add_field(
+        name="🎙️ Lecture Vocale",
+        value=(
+            "`!play <url>` - Joue une musique dans le salon vocal\n"
+            "`!play -u <uid> <numero>` - Joue une musique trouvée par `!find`\n"
+            "`!stop` - Arrête la musique en cours\n"
+            "`!exit` - Déconnecte le bot du salon"
+        ),
+        inline=False
+    )
+    
+    embed.add_field(
+        name="⚙️ Autres",
+        value=(
+            "`!help` - Affiche ce message d'aide\n"
+            "`!reboot` - Redémarre le bot et l'interface web"
+        ),
+        inline=False
+    )
+    
+    embed.set_footer(text="Profitez de votre musique ! 🎵")
+    await ctx.send(embed=embed)
 
 @bot.command(name='convert')
 async def convert(ctx, url: str, *args):

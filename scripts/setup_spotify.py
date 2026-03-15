@@ -1,5 +1,4 @@
 import os
-import sys
 
 def setup_spotify():
     print("=== Configuration Spotify API ===")
